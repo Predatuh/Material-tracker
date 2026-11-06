@@ -1061,6 +1061,7 @@ function dwgBody(st) {
     <div class="grid2"><label class="f"><span>Blocks are</span><select data-k="bt">${S.types.map((ty) => `<option value="${ty.id}" ${ty.id === S.types.find((x) => !x.parent_type_id)?.id ? 'selected' : ''}>${esc(ty.plural)}</option>`).join('')}</select></label>
       <label class="f"><span>Name them</span><input data-k="bp" value="PB-"></label>
       <label class="f"><span>Transitions</span><select data-k="tt"><option value="">Don't add</option>${S.types.filter((ty) => ty.parent_type_id).map((ty) => `<option value="${ty.id}" ${ty.shape === 'pin' ? 'selected' : ''}>Add as ${esc(ty.plural.toLowerCase())}</option>`).join('')}</select></label></div>
+    <label class="check"><input type="checkbox" data-k="hl" checked> Only transitions highlighted on the sheets (the buildable ones). Unhighlighted ones already added get removed unless work was logged on them.</label>
     <button class="btn sm sun" data-act="dwg-blocks">Read block sheets</button></div>` : ''}
   ${links.filter((lk) => !lk.page).length ? `<h3>Whole file is linked to</h3><div class="chips">${linkChips(0)}</div>` : ''}
   ${S.manage ? `<div class="row" style="margin-top:12px"><button class="btn sm" data-act="link-page" data-p="0">Link whole file</button></div>` : ''}
@@ -1146,7 +1147,8 @@ function openDwgUpload(presetTracker) {
       <div class="bs-opts" hidden><p class="hint">Makes a block for each sheet and numbers it with the big number marked on the sheet (your red 1–33), or in sheet-number order if there isn't one. It keeps the sheet's ID (INV31C105) as its drawing ID, and links that page to it. Blocks that already exist are matched by name or drawing ID instead of duplicated.</p>
         <div class="grid2"><label class="f"><span>Blocks are</span><select name="block_type_id">${S.types.map((ty) => `<option value="${ty.id}" ${!ty.parent_type_id && ty.id === S.types.find((x) => !x.parent_type_id)?.id ? 'selected' : ''}>${esc(ty.plural)}</option>`).join('')}</select></label>
           <label class="f"><span>Name them</span><input name="block_prefix" value="PB-" placeholder="PB-"></label></div>
-        <label class="f"><span>Transitions on each sheet ("(3) TR 31C105-01")</span><select name="tr_type_id"><option value="">Don't add them</option>${S.types.filter((ty) => ty.parent_type_id).map((ty) => `<option value="${ty.id}" ${ty.shape === 'pin' ? 'selected' : ''}>Add as ${esc(ty.plural.toLowerCase())}</option>`).join('')}</select></label></div></div>
+        <label class="f"><span>Transitions on each sheet ("(3) TR 31C105-01")</span><select name="tr_type_id"><option value="">Don't add them</option>${S.types.filter((ty) => ty.parent_type_id).map((ty) => `<option value="${ty.id}" ${ty.shape === 'pin' ? 'selected' : ''}>Add as ${esc(ty.plural.toLowerCase())}</option>`).join('')}</select></label>
+        <label class="check"><input type="checkbox" name="tr_highlighted" value="1" checked> Only transitions highlighted on the sheets (the buildable ones)</label></div></div>
     <label class="f"><span>Also attach to tracker</span><select name="tracker_id"><option value="">None</option>${S.trackers.map((t) => `<option value="${t.id}" ${String(presetTracker) === String(t.id) ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select></label>
     <p class="hint">Big IFC sets can take a minute to upload and read.</p><button class="btn sun">Upload</button></form>`);
 }
@@ -1367,8 +1369,8 @@ const ACT = {
   'dwg-blocks': async (el) => {
     const st = ui.panel; const box = el.closest('.fieldset'); const v = (k) => box.querySelector(`[data-k=${k}]`).value;
     el.disabled = true; el.textContent = 'Reading sheets…';
-    try { const r = await mutate('PUT', `/api/drawings/${st.id}`, { block_type_id: +v('bt'), block_prefix: v('bp'), tr_type_id: v('tt') ? +v('tt') : null });
-      const b = r.blocks; toast(b.pages ? `Read ${b.pages} block sheets: ${b.blocks} new blocks, ${b.linked} pages linked, ${b.transitions} transitions added` : 'No "BLOCK LAYOUT - …" sheet titles found in this file.', { bad: !b.pages }); }
+    try { const r = await mutate('PUT', `/api/drawings/${st.id}`, { block_type_id: +v('bt'), block_prefix: v('bp'), tr_type_id: v('tt') ? +v('tt') : null, tr_highlighted: box.querySelector('[data-k=hl]').checked });
+      const b = r.blocks; toast(b.pages ? `Read ${b.pages} block sheets: ${b.blocks} new blocks, ${b.linked} pages linked, ${b.transitions} transitions added${b.removed ? `, ${b.removed} unhighlighted removed` : ''}${b.kept_used ? ` (${b.kept_used} kept: work already logged)` : ''}` : 'No "BLOCK LAYOUT - …" sheet titles found in this file.', { bad: !b.pages }); }
     catch { /* toast shown */ } finally { el.disabled = false; el.textContent = 'Read block sheets'; }
   },
   'dwg-del': async (el) => { if (!confirm('Delete this drawing and its links?')) return; await mutate('DELETE', `/api/drawings/${el.dataset.id}`, undefined, { ok: 'Drawing deleted' }); closePanel(); },
@@ -1468,7 +1470,7 @@ const FORMS = {
   async 'dwg-upload'(f) {
     const fd = new FormData(f); if (fd.get('block_set')) fd.delete('auto_type_id');
     try { const r = await uploadWithProgress(f, '/api/drawings', fd);
-      toast(r.blocks ? `Read ${r.blocks.pages} block sheets (numbered by ${r.blocks.numbered_by}): ${r.blocks.blocks} new blocks, ${r.blocks.linked} pages linked, ${r.blocks.transitions} transitions` : r.linked ? `Uploaded. Matched ${r.linked} page${r.linked > 1 ? 's' : ''} to locations.` : 'Uploaded.'); openDrawing(r.id); if (ui.view !== 'drawings') { ui.view = 'drawings'; location.hash = 'drawings'; render(); } }
+      toast(r.blocks ? `Read ${r.blocks.pages} block sheets (numbered by ${r.blocks.numbered_by}): ${r.blocks.blocks} new blocks, ${r.blocks.linked} pages linked, ${r.blocks.transitions} ${r.blocks.highlighted_only ? 'highlighted ' : ''}transitions` : r.linked ? `Uploaded. Matched ${r.linked} page${r.linked > 1 ? 's' : ''} to locations.` : 'Uploaded.'); openDrawing(r.id); if (ui.view !== 'drawings') { ui.view = 'drawings'; location.hash = 'drawings'; render(); } }
     catch { /* toast shown */ }
   },
   async 'dwg-meta'(f) { await mutate('PUT', `/api/drawings/${ui.panel.id}`, Object.fromEntries(new FormData(f)), { ok: 'Saved' }); },

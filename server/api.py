@@ -871,9 +871,20 @@ def _import_block_set(dr, opts):
         # a big hand-added number on the sheet (e.g. a red "27") is the crew's block number
         marks = [s["text"].strip() for b in tp.extractDICT()["blocks"] for l in b.get("lines", []) for s in l["spans"]
                  if s["size"] >= 40 and s["text"].strip().isdigit()]
+        # transitions the engineer/foreman highlighted (a coloured box behind the "TR 31C105-01" label) = buildable
+        hl = set()
+        if opts.get("highlighted_only"):
+            words = [w for w in tp.extractWORDS() if re.match(r"[0-9A-Z]+-\d{1,3}$", w[4]) and w[4].upper().startswith(own)]
+            boxes = [x["rect"] for x in doc[i - 1].get_drawings()
+                     if x.get("fill") and x["rect"].width < 400 and x["rect"].height < 80
+                     and max(x["fill"]) - min(x["fill"]) > 0.3]  # saturated colour, not white/grey/black
+            for w in words:
+                r = fitz.Rect(w[:4])
+                if any((b & r).get_area() > 0.6 * r.get_area() for b in boxes):
+                    hl.add(w[4].upper())
         del tp
         fitz.TOOLS.store_shrink(100)  # free MuPDF's page cache; big IFC sheets otherwise pile up hundreds of MB
-        found.append({"page": i, "code": code, "sheet": sheets[0] if sheets else "", "mark": int(marks[0]) if marks else None,
+        found.append({"page": i, "code": code, "sheet": sheets[0] if sheets else "", "mark": int(marks[0]) if marks else None, "hl": hl,
                       "trs": sorted({(t.upper(), int(n)) for n, t in tr_re.findall(text) if t.upper().startswith(own) or own not in text}, key=lambda x: _natkey(x[0]))})
     if not found:
         return {"blocks": 0, "linked": 0, "transitions": 0, "pages": 0}
@@ -893,7 +904,8 @@ def _import_block_set(dr, opts):
     by_code = {(l.code or "").upper(): l for l in existing if l.code}
     by_name = {l.name.upper(): l for l in existing}
     base = (db.session.query(db.func.max(Location.sort)).scalar() or 0) + 1
-    made = linked = trs_made = 0
+    made = linked = trs_made = trs_removed = trs_kept_used = 0
+    only_hl = bool(opts.get("highlighted_only")) and any(f["hl"] for f in found)
     if by_mark:
         pad = max(2, len(str(max(marks))))
     for n, f in enumerate(found, start=1):
@@ -912,15 +924,29 @@ def _import_block_set(dr, opts):
             db.session.add(DrawingLink(drawing_id=dr.id, page=f["page"], location_id=loc.id))
             linked += 1
         if tr_type and f["trs"]:
-            kids = {k.name.upper() for k in Location.query.filter_by(type_id=tr_type, parent_id=loc.id).all()}
+            kid_rows = Location.query.filter_by(type_id=tr_type, parent_id=loc.id).all()
+            kids = {k.name.upper() for k in kid_rows}
+            if only_hl:
+                # clear out non-highlighted transitions added earlier, unless someone already logged work on them
+                keep = {f"TR {t}" for t in f["hl"]}
+                sheet_names = {f"TR {t}" for t, _ in f["trs"]}
+                for k in kid_rows:
+                    if k.name.upper() in sheet_names and k.name.upper() not in keep:
+                        if Entry.query.filter_by(location_id=k.id).count() or Txn.query.filter_by(location_id=k.id).count():
+                            trs_kept_used += 1
+                            continue
+                        _delete_locations([k.id])
+                        kids.discard(k.name.upper())
+                        trs_removed += 1
             for k, (tr, count) in enumerate(f["trs"]):
                 tname = f"TR {tr}"
-                if tname.upper() in kids:
+                if tname.upper() in kids or (only_hl and tr not in f["hl"]):
                     continue
                 db.session.add(Location(type_id=tr_type, parent_id=loc.id, name=tname, zone=loc.zone,
                                         notes=f"({count}) on IFC sheet", sort=base + n * 100 + k))
                 trs_made += 1
     return {"blocks": made, "linked": linked, "transitions": trs_made, "pages": len(found),
+            "highlighted_only": only_hl, "removed": trs_removed, "kept_used": trs_kept_used,
             "numbered_by": "numbers marked on the sheets" if by_mark else "sheet number order" if all(f["sheet"] for f in found) else "sheet ID order"}
 
 
@@ -959,7 +985,7 @@ def upload_drawing():
     blocks = None
     if is_pdf and fm.get("block_set") and fm.get("block_type_id"):
         blocks = _import_block_set(dr, {"doc": doc, "type_id": fm["block_type_id"], "prefix": fm.get("block_prefix", "PB-"),
-                                        "tr_type_id": fm.get("tr_type_id") or None})
+                                        "tr_type_id": fm.get("tr_type_id") or None, "highlighted_only": bool(fm.get("tr_highlighted"))})
         linked = blocks["linked"]
     elif is_pdf and fm.get("auto_type_id"):
         linked = _auto_link(dr, int(fm["auto_type_id"]), doc=doc)
@@ -1009,7 +1035,7 @@ def edit_drawing(did):
             setattr(dr, k, (d[k] or "").strip())
     if d.get("block_type_id") and dr.mime == "application/pdf":
         res = _import_block_set(dr, {"type_id": d["block_type_id"], "prefix": d.get("block_prefix", "PB-"),
-                                     "tr_type_id": d.get("tr_type_id") or None})
+                                     "tr_type_id": d.get("tr_type_id") or None, "highlighted_only": bool(d.get("tr_highlighted"))})
         log("drawing", f"Read {res['pages']} block sheets from {dr.name}: {res['blocks']} new blocks, {res['linked']} pages linked, {res['transitions']} transitions")
         return done(blocks=res)
     if d.get("auto_type_id") and dr.mime == "application/pdf":
