@@ -1064,6 +1064,59 @@ def _png_dims(raw):
         return (None, None)
 
 
+def _clean_svg(raw):
+    """Plans can be SVG. Strip anything active so the file is only a picture."""
+    s = raw.decode("utf-8", "replace")
+    s = re.sub(r"<script\b.*?</script>", "", s, flags=re.I | re.S)
+    s = re.sub(r"<foreignObject\b.*?</foreignObject>", "", s, flags=re.I | re.S)
+    s = re.sub(r"\son[a-z]+\s*=\s*(\"[^\"]*\"|'[^']*')", "", s, flags=re.I)
+    s = re.sub(r"(href\s*=\s*[\"'])\s*(javascript|https?):[^\"']*", r"\1#", s, flags=re.I)
+    return s
+
+
+def _svg_outlines(svg):
+    """Polygons tagged data-label="07" in an SVG plan -> {label: [[x%, y%], ...]}, plus the viewBox size."""
+    vb = re.search(r'viewBox\s*=\s*"\s*([-\d.]+)[ ,]+([-\d.]+)[ ,]+([\d.]+)[ ,]+([\d.]+)', svg)
+    if not vb:
+        return None, None, {}
+    ox, oy, w, h = (float(v) for v in vb.groups())
+    out = {}
+    for m in re.finditer(r"<polygon\b[^>]*>", svg, flags=re.I):
+        tag = m.group(0)
+        lab = re.search(r'data-label\s*=\s*"([^"]+)"', tag)
+        pts = re.search(r'points\s*=\s*"([^"]+)"', tag)
+        if not lab or not pts:
+            continue
+        nums = [float(v) for v in re.findall(r"-?[\d.]+", pts.group(1))]
+        out[lab.group(1).strip()] = [[round((nums[i] - ox) / w * 100, 3), round((nums[i + 1] - oy) / h * 100, 3)] for i in range(0, len(nums) - 1, 2)]
+    return w, h, out
+
+
+def _place_outlines(map_id, outlines, type_id):
+    """Match outline labels to locations by number (label '07' -> PB-07 / Block 7) and create the areas."""
+    locs = Location.query.filter_by(type_id=type_id).all()
+    def num(s):
+        d = re.findall(r"\d+", s or "")
+        return int(d[-1]) if d else None
+    by_num = {}
+    for l in locs:
+        n = num(l.name)
+        if n is not None:
+            by_num.setdefault(n, l)
+    have = {a.location_id for a in Area.query.filter_by(map_id=map_id).all()}
+    placed, missing = 0, []
+    for lab, pts in outlines.items():
+        l = by_num.get(num(lab)) or next((x for x in locs if x.name.lower() == lab.lower() or (x.code or "").lower() == lab.lower()), None)
+        if not l:
+            missing.append(lab)
+            l = None
+        if l and l.id in have:
+            continue
+        db.session.add(Area(map_id=map_id, location_id=l.id if l else None, points=pts))
+        placed += 1 if l else 0
+    return placed, missing
+
+
 @bp.post("/map")
 @auth(manage=True)
 def upload_map():
@@ -1072,7 +1125,14 @@ def upload_map():
         return err("Choose a plan file.")
     raw, mime, name = f.read(), (f.mimetype or ""), f.filename or "Plan"
     width = height = None
-    if name.lower().endswith(".pdf") or mime == "application/pdf":
+    outlines = {}
+    if name.lower().endswith(".svg") or "svg" in mime:
+        svg = _clean_svg(raw)
+        width, height, outlines = _svg_outlines(svg)
+        if not width:
+            return err("That SVG has no viewBox, so it can't be used as a plan.")
+        raw, mime, width, height = svg.encode("utf-8"), "image/svg+xml", int(width), int(height)
+    elif name.lower().endswith(".pdf") or mime == "application/pdf":
         try:
             fitz = _fitz()
         except ImportError:
@@ -1091,8 +1151,12 @@ def upload_map():
                 location_id=loc_id, data=raw, mime=mime, width=width, height=height)
     db.session.add(m)
     db.session.flush()
-    log("map", f"Uploaded plan {m.name}")
-    return done(id=m.id)
+    placed, missing = 0, []
+    if outlines:
+        tid = int(request.form.get("outline_type_id") or 0) or (LocType.query.filter_by(parent_type_id=None).order_by(LocType.sort).first() or LocType.query.first()).id
+        placed, missing = _place_outlines(m.id, outlines, tid)
+    log("map", f"Uploaded plan {m.name}" + (f", placed {placed} outlines" if outlines else ""))
+    return done(id=m.id, placed=placed, outlines=len(outlines), missing=missing)
 
 
 @bp.post("/map/from-drawing")
@@ -1126,7 +1190,10 @@ def map_from_drawing():
 @bp.get("/map/<int:mid>/image")
 def map_image(mid):
     m = get_or_404(SiteMap, mid)
-    return Response(m.data, mimetype=m.mime, headers={"Cache-Control": "public, max-age=31536000"})
+    headers = {"Cache-Control": "public, max-age=31536000"}
+    if m.mime == "image/svg+xml":
+        headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+    return Response(m.data, mimetype=m.mime, headers=headers)
 
 
 @bp.put("/map/<int:mid>")

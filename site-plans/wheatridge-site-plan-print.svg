@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1720 3030" width="1720" height="3030" font-family="Arial, Helvetica, sans-serif">
+<rect width="1720" height="3030" fill="#ffffff"/>
+<g id="roads" fill="none" stroke="#c3c8cd" stroke-width="10" stroke-linecap="round">
+<line x1="0" y1="2198" x2="1720" y2="2190"/>
+<line x1="136" y1="2210" x2="136" y2="2930"/>
+<line x1="1500" y1="2206" x2="1500" y2="2990"/>
+</g><g id="road-labels" fill="#8a9097" font-size="30" font-style="italic" text-anchor="middle">
+<text x="1240" y="2270" transform="rotate(0 1240 2270)">Strawberry Ln</text>
+<text x="88" y="2570" transform="rotate(-90 88 2570)">Lindsay Rd</text>
+<text x="1560" y="2610" transform="rotate(90 1560 2610)">Barak Martin Rd N</text>
+</g><g id="blocks" fill="#ffffff" stroke="#111111" stroke-width="7" stroke-linejoin="round">
+<polygon data-label="01" points="160,262 156,594 304,598 304,346 252,342 252,262"/>
+<polygon data-label="02" points="568,182 564,430 760,434 756,274 720,266 720,182"/>
+<polygon data-label="03" points="172,602 172,850 352,854 348,690 356,682 356,606"/>
+<polygon data-label="04" points="560,438 544,770 680,774 688,438"/>
+<polygon data-label="05" points="696,438 692,774 840,774 840,698 828,694 832,526 808,526 800,514 800,442"/>
+<polygon data-label="06" points="172,858 168,1110 340,1110 352,862"/>
+<polygon data-label="07" points="540,782 536,1026 712,1030 716,782"/>
+<polygon data-label="08" points="724,782 720,1030 896,1030 900,786"/>
+<polygon data-label="09" points="164,1114 168,1278 160,1286 160,1362 340,1366 340,1118"/>
+<polygon data-label="10" points="552,1038 552,1110 596,1110 604,1118 604,1174 628,1178 628,1286 768,1286 772,1038"/>
+<polygon data-label="11" points="784,1038 780,1286 948,1290 952,1042"/>
+<polygon data-label="12" points="960,1042 960,1290 1188,1290 1188,1214 1156,1206 1156,1158 1132,1154 1128,1130 1068,1126 1068,1066 1052,1062 1052,1042"/>
+<polygon data-label="13" points="168,1370 164,1618 340,1622 340,1374"/>
+<polygon data-label="14" points="352,1290 348,1538 520,1542 528,1290"/>
+<polygon data-label="15" points="532,1290 532,1542 704,1542 708,1294"/>
+<polygon data-label="16" points="716,1294 716,1542 892,1542 892,1294"/>
+<polygon data-label="17" points="896,1542 960,1546 960,1462 968,1454 1088,1458 1088,1438 1104,1430 1104,1382 1112,1374 1164,1374 1164,1298 900,1298"/>
+<polygon data-label="18" points="348,1546 344,1878 472,1882 472,1546"/>
+<polygon data-label="19" points="480,1550 480,1878 612,1882 612,1550"/>
+<polygon data-label="20" points="620,1550 616,1882 748,1882 748,1554"/>
+<polygon data-label="21" points="756,1550 756,1882 880,1886 884,1550"/>
+<polygon data-label="22" points="896,1550 888,1882 1028,1886 1032,1638 992,1638 984,1630 984,1550"/>
+<polygon data-label="23" points="1256,1562 1248,1830 1424,1834 1416,1750 1396,1746 1392,1662 1352,1654 1356,1566"/>
+<polygon data-label="24" points="460,1886 464,2154 608,2154 612,1890"/>
+<polygon data-label="25" points="616,1890 612,2154 756,2158 760,1890"/>
+<polygon data-label="26" points="764,1898 764,2142 928,2142 932,2066 940,2058 976,2058 976,1982 1012,1974 1012,1902"/>
+<polygon data-label="27" points="1452,1842 1244,1838 1232,2002 1152,2006 1152,2078 1228,2082 1236,2090 1236,2162 1264,2162 1264,2142 1284,2134 1288,2082 1332,2082 1332,2002 1396,1998 1396,1922 1404,1914 1452,1914"/>
+<polygon data-label="28" points="152,2230 152,2474 356,2474 356,2234"/>
+<polygon data-label="29" points="364,2234 364,2474 572,2478 576,2322 568,2314 568,2238"/>
+<polygon data-label="30" points="576,2238 576,2310 584,2318 580,2478 716,2482 716,2462 744,2454 748,2402 804,2394 808,2234"/>
+<polygon data-label="31" points="152,2482 144,2862 276,2866 284,2482"/>
+<polygon data-label="32" points="292,2482 284,2866 416,2866 424,2486"/>
+<polygon data-label="33" points="612,2486 432,2486 424,2866 500,2866 500,2818 516,2810 516,2734 548,2726 548,2646 592,2642 592,2626 608,2618"/>
+</g><g id="block-labels" fill="#111111" font-size="44" font-weight="700" text-anchor="middle"><text x="220" y="433">01</text><text x="652" y="325">02</text><text x="252" y="757">03</text><text x="620" y="625">04</text><text x="756" y="633">05</text><text x="260" y="985">06</text><text x="628" y="917">07</text><text x="808" y="917">08</text><text x="248" y="1229">09</text><text x="680" y="1161">10</text><text x="868" y="1177">11</text><text x="1068" y="1221">12</text><text x="252" y="1509">13</text><text x="432" y="1425">14</text><text x="620" y="1429">15</text><text x="804" y="1429">16</text><text x="1004" y="1405">17</text><text x="408" y="1729">18</text><text x="548" y="1729">19</text><text x="680" y="1729">20</text><text x="816" y="1729">21</text><text x="956" y="1745">22</text><text x="1324" y="1729">23</text><text x="532" y="2033">24</text><text x="680" y="2033">25</text><text x="872" y="2025">26</text><text x="1300" y="1985">27</text><text x="244" y="2369">28</text><text x="464" y="2373">29</text><text x="680" y="2365">30</text><text x="212" y="2681">31</text><text x="348" y="2677">32</text><text x="492" y="2665">33</text></g>
+<text x="36" y="62" font-size="44" font-weight="700" fill="#111">Wheatridge Optimization I</text><text x="36" y="98" font-size="26" fill="#555">Power blocks 01–33 · Lexington, OR</text>
+<g transform="translate(1650,64)"><path d="M0,-38 L18,20 L0,8 L-18,20 Z" fill="#111"/><text y="54" font-size="28" font-weight="700" text-anchor="middle" fill="#111">N</text></g></svg>

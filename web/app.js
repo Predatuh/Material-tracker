@@ -625,6 +625,8 @@ function areaCenter(a, g) {
   const xs = a.points.map((p) => (p[0] * g.W) / 100), ys = a.points.map((p) => (p[1] * g.H) / 100);
   return { x: xs.reduce((s, v) => s + v, 0) / xs.length, y: ys.reduce((s, v) => s + v, 0) / ys.length, bw: Math.max(...xs) - Math.min(...xs), bh: Math.max(...ys) - Math.min(...ys) };
 }
+// "PB-07" -> "07" on plans: the number is what's painted on the site map
+const mapLabel = (l) => { const m = l.name.match(/^[A-Za-z]{1,4}[-\s]?(\d+)$/); return m ? m[1] : l.name; };
 function svgContent() {
   const g = mapGeom(); const { m, W, H, M, cols, rows } = g; const mp = ui.map; const t = S.TR[mp.trId]; const fs = M * 0.45;
   let frame = `<rect class="frame" x="${-M * 0.92}" y="${-M * 0.92}" width="${W + M * 1.84}" height="${H + M * 1.84}" stroke-width="1.2"/>`;
@@ -651,8 +653,8 @@ function svgContent() {
     const cl = l && t && t.claims && S.inScope[t.id].has(l.id) ? claimOf(t, l.id) : [];
     const cls = (!l ? 'unassigned' : !lit ? 'k-todo' : `k-${kindOf(st)}`) + (cl.length ? ' claimed' : '');
     shapes.push(`<polygon class="area ${cls} ${mp.picked === a.id ? 'picked' : ''} ${l && S.mapFor[l.id] ? 'hasmap' : ''}" data-area="${a.id}" points="${pts}" style="--c:${esc(st?.color || '#8A98B3')}"/>`);
-    if (l) { const c = areaCenter(a, g); const size = clamp(Math.min(c.bw / Math.max(l.name.length * 0.62, 1), c.bh * 0.5), W / 450, W / 45);
-      labels.push(`<text class="mlbl" x="${c.x}" y="${cl.length ? c.y - size * 0.45 : c.y}" font-size="${size}" style="stroke-width:${size * 0.22}px">${esc(l.name)}</text>`);
+    if (l) { const c = areaCenter(a, g); const short = mapLabel(l); const size = clamp(Math.min(c.bw / Math.max(short.length * 0.62, 1), c.bh * 0.5), W / 450, W / 30);
+      labels.push(`<text class="mlbl" x="${c.x}" y="${cl.length ? c.y - size * 0.45 : c.y}" font-size="${size}" style="stroke-width:${size * 0.22}px">${esc(short)}</text>`);
       if (cl.length) labels.push(`<text class="mlbl cl" x="${c.x}" y="${c.y + size * 0.6}" font-size="${size * 0.62}" style="stroke-width:${size * 0.18}px">✋ ${esc(cl.join(', '))}</text>`); }
   }
   let draft = '';
@@ -1119,7 +1121,8 @@ function openImport() {
     <label class="f"><span>CSV</span><textarea name="csv" style="min-height:220px" placeholder="name,part_no,category,unit,on_hand,reorder_point&#10;10 AWG PV wire red,PV10R,Wire,ft,5000,2000"></textarea></label><button class="btn sun">Import</button></form>`);
 }
 function openMapUpload(locId) {
-  openPanel('Add plan', 'PDF, PNG or JPG', `<form data-form="map-upload"><label class="f"><span>File</span><input type="file" name="file" accept=".pdf,image/png,image/jpeg" required></label>
+  openPanel('Add plan', 'SVG, PDF, PNG or JPG', `<form data-form="map-upload"><label class="f"><span>File</span><input type="file" name="file" accept=".svg,image/svg+xml,.pdf,image/png,image/jpeg" required></label>
+    <label class="f"><span>If it's an SVG with numbered outlines, place them on</span><select name="outline_type_id">${S.types.map((ty) => `<option value="${ty.id}" ${ty.id === S.types.find((x) => !x.parent_type_id)?.id ? 'selected' : ''}>${esc(ty.plural)} (matched by number)</option>`).join('')}</select></label>
     <div class="grid2"><label class="f"><span>PDF page</span><input type="number" name="page" value="1" min="1"></label><label class="f"><span>Name</span><input name="name" placeholder="Site plan"></label></div>
     <label class="f"><span>This plan is for</span><select name="location_id"><option value="">The whole site</option>${locOptions(locId || '')}</select></label>
     <p class="hint">A plan for one location (like a PB) opens when someone taps that PB, so they can outline rows and pin transitions on it. You can also make plans from pages on the Drawings tab.</p><button class="btn sun">Upload</button></form>`);
@@ -1441,7 +1444,7 @@ const FORMS = {
   async 'map-upload'(f) {
     const fd = new FormData(f); const file = fd.get('file');
     if (file?.type?.startsWith('image/')) { const dims = await new Promise((res) => { const img = new Image(); img.onload = () => res([img.naturalWidth, img.naturalHeight]); img.onerror = () => res([0, 0]); img.src = URL.createObjectURL(file); }); fd.set('width', dims[0]); fd.set('height', dims[1]); }
-    try { const r = await uploadWithProgress(f, '/api/map', fd); toast('Plan added'); ui.map.id = r.id; ui.map.fitted = false; ui.map.assignType = null; closePanel(); if (ui.view !== 'map') go('map'); else render(); }
+    try { const r = await uploadWithProgress(f, '/api/map', fd); toast(r.outlines ? `Plan added. Placed ${r.placed} of ${r.outlines} outlines${r.missing?.length ? ` (no match for ${r.missing.slice(0, 5).join(', ')})` : ''}` : 'Plan added'); ui.map.id = r.id; ui.map.fitted = false; ui.map.assignType = null; closePanel(); if (ui.view !== 'map') go('map'); else render(); }
     catch { /* toast shown */ }
   },
   async 'dwg-upload'(f) {
