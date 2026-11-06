@@ -49,6 +49,24 @@ You can add more, like Inverter, Combiner or Trench segment. Each type can live 
 ## Materials
 On hand, out with the crew, on order, still needed and short, with a stock gauge for each item. Movements are grab, used/installed, return, received, order and count. Every person's checked-out material is tracked. You can import from CSV, and the order list exports to CSV.
 
+## Hardware kits
+
+Each tracker has a kit: what one location takes (one transition, one PB, one row). Every line is counted:
+
+- **Each**: 4 bolts per transition.
+- **Per a count**: 2 conduit straps per LBD run. The count ("LBD runs") is a number field with a default, set on each location. 5 LBD runs takes 10 straps.
+- **Per unit** (quantity trackers): 1.05 ft of ground per ft pulled.
+
+Each line can add a spare %. Steps trackers can tie a line to the step that uses it.
+
+The kit mode decides what moves by itself:
+
+- **Out on claim, installed when done** (default): claiming puts the kit out with the claimer, "Claim instead" moves it to the new person, done counts it installed, unclaiming returns it.
+- **Installed when done**: done takes it from stock as installed.
+- **Forecast only**: nothing moves; the kit only drives "still need".
+
+Kit movements are normal history entries marked "Kit". They're reconciled against the claim and done state, so undoing a done or editing a count corrects them instead of doubling them.
+
 ## Roles
 - **Crew**: log material and update progress
 - **Lead**: also manages materials, trackers, plans and drawings

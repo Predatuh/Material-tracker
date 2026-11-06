@@ -8,7 +8,7 @@ from functools import wraps
 from flask import Blueprint, Response, abort, current_app, g, jsonify, request
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
-from .logic import KINDS, apply_txn, compute_needs, out_by_person, scope_locations
+from .logic import KINDS, apply_txn, compute_needs, out_by_person, scope_locations, sync_kits
 from .models import (DEFAULT_STATUSES, Activity, Area, Drawing, DrawingLink, Entry, Location, LocType, Material,
                      Setting, SiteMap, Step, Tracker, TrackerMaterial, Txn, User, db, now)
 
@@ -415,7 +415,10 @@ def _clean_fields(raw):
         seen.add(key)
         ftype = f.get("type") if f.get("type") in FIELD_TYPES else "text"
         opts = [o.strip() for o in (f.get("options") or []) if o and o.strip()] if ftype == "select" else []
-        out.append({"key": key, "label": label, "type": ftype, "options": opts})
+        row = {"key": key, "label": label, "type": ftype, "options": opts}
+        if ftype == "number":
+            row["default"] = num(f.get("default"))
+        out.append(row)
     return out
 
 
@@ -429,6 +432,8 @@ def _sync_tracker(t, d):
         t.mode = d["mode"]
     if d.get("status") in ("active", "hold", "done"):
         t.status = d["status"]
+    if d.get("kit_mode") in ("claim", "done", "off"):
+        t.kit_mode = d["kit_mode"]
     for k in ("claims", "show_map"):
         if k in d:
             setattr(t, k, bool(d[k]))
@@ -473,7 +478,18 @@ def _sync_tracker(t, d):
             si = row.get("step_index")
             if si is not None and str(si) != "" and 0 <= int(si) < len(steps):
                 step_id = steps[int(si)].id
-            t.materials.append(TrackerMaterial(material_id=int(row["material_id"]), step_id=step_id, qty=num(row["qty"])))
+            per = str(row.get("per") or "each")
+            nums = {f["key"] for f in (t.fields or []) if f.get("type") == "number"}
+            if per == "unit" and t.mode != "qty" or per.startswith("f:") and per[2:] not in nums or per not in ("each", "unit") and not per.startswith("f:"):
+                per = "each"
+            t.materials.append(TrackerMaterial(material_id=int(row["material_id"]), step_id=step_id, qty=num(row["qty"]),
+                                               per=per, extra_pct=max(0.0, num(row.get("extra_pct")))))
+    if d.get("apply_kits"):
+        db.session.flush()
+        lids = {lid for (lid,) in db.session.query(Entry.location_id).filter(Entry.tracker_id == t.id).distinct()}
+        moved = sync_kits(t, lids, g.user.name)
+        if moved:
+            log("material", f"{t.name}: kit applied to work already claimed or done ({len(moved)} movements)")
 
 
 @bp.post("/trackers")
@@ -578,19 +594,8 @@ def set_entries():
             e.updated_by, e.updated_at = g.user.name, now()
             if e.status in done_keys and before not in done_keys:
                 newly_done.append((lid, sid))
-    if d.get("log_materials") and newly_done and t.mode != "qty":
-        person = (d.get("crew") or [""])[0]
-        for lid, sid in newly_done:
-            for tm in t.materials:
-                if ((t.mode == "steps" and tm.step_id == sid) or t.mode == "status") and tm.qty:
-                    m = db.session.get(Material, tm.material_id)
-                    if not m:
-                        continue
-                    src = "out" if m.out_qty >= tm.qty else "stock"
-                    tx = Txn(material_id=m.id, kind="used", qty=tm.qty, source=src, person=person, location_id=lid,
-                             tracker_id=t.id, note="Logged when marked done", by=g.user.name)
-                    apply_txn(m, tx)
-                    db.session.add(tx)
+    db.session.flush()
+    moved = sync_kits(t, list(locs), g.user.name)
     # activity line
     names = sorted(locs[l].name for l in locs)
     where = ", ".join(names[:6]) + (f" +{len(names) - 6} more" if len(names) > 6 else "")
@@ -606,7 +611,26 @@ def set_entries():
         log("progress", f"{t.name}: {'+' if 'qty_add' in d else ''}{amt} {t.unit} on {where}")
     else:
         log("progress", f"{t.name} → {statuses[status]['label'] if status else 'updated'} on {where}")
-    return done()
+    kit = _kit_summary(moved)
+    for line in kit:
+        log("material", f"Kit {line['text']} ({where})")
+    return done(kit=kit)
+
+
+def _kit_summary(moved):
+    """[(material, kind, qty, person)] → [{kind, person, text, items:[{name, qty, unit}]}] grouped for a toast."""
+    verbs = {"grab": "out to", "return": "back from", "used": "installed by", "unused": "install undone, back with"}
+    groups = {}
+    for m, kind, qty, person in moved:
+        g_ = groups.setdefault((kind, person), {})
+        g_[m.id] = (m, g_.get(m.id, (m, 0))[1] + qty)
+    out = []
+    for (kind, person), items in groups.items():
+        parts = [f"{fmt(q)} {m.unit + ' ' if m.unit and m.unit != 'ea' else ''}{m.name}" for m, q in items.values()]
+        out.append({"kind": kind, "person": person, "text": f"{verbs.get(kind, kind)} {person or 'stock'}: " + ", ".join(parts),
+                    "items": [{"material_id": m.id, "name": m.name, "qty": round(q, 3), "unit": m.unit} for m, q in items.values()]})
+    order = {"return": 0, "grab": 1, "used": 2, "unused": 3}
+    return sorted(out, key=lambda x: order.get(x["kind"], 3))
 
 
 # ── materials ──────────────────────────────────────────────────────────

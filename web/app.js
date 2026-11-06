@@ -254,18 +254,39 @@ function progress(t) {
   }
   return { pct: Math.round(pct), exact: pct, doneLocs, total: n, problems };
 }
+const LEN_UNITS = new Set(['ft', 'lf', 'm', "'", 'in', 'yd']);
+const isLen = (m) => LEN_UNITS.has((m?.unit || '').toLowerCase());
+const slugKey = (x) => (x || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'x';
+const fieldKey = (f) => f.key || slugKey(f.label);
+function fieldCount(t, lid, key) {
+  const f = (t.fields || []).find((x) => fieldKey(x) === key); let v = ent(t, lid, 0)?.values?.[key];
+  if (v == null || v === '') v = f?.default ?? 0; return Math.max(0, +v || 0);
+}
+// How much of one kit line a single location takes, spare included. Mirrors server/logic.py kit_total.
+function kitTotal(t, tm, lid) {
+  const per = tm.per || 'each'; const base = per === 'unit' ? targetOf(t, lid) : per.startsWith('f:') ? fieldCount(t, lid, per.slice(2)) : 1;
+  const v = (+tm.qty || 0) * base * (1 + (+tm.extra_pct || 0) / 100);
+  return isLen(S.M[tm.material_id]) ? Math.round(v * 1000) / 1000 : Math.ceil(v - 1e-9);
+}
+function kitProgress(t, tm, lid) {
+  if (t.mode === 'qty') { const tg = targetOf(t, lid); const e0 = ent(t, lid, 0);
+    if ((tm.per || 'each') === 'unit' && tg && e0) return Math.min(1, (e0.qty || 0) / tg); return entStatus(t, lid).done ? 1 : 0; }
+  if (t.mode === 'status') return entStatus(t, lid).done ? 1 : 0;
+  if (tm.step_id) return entStatus(t, lid, tm.step_id).done ? 1 : 0;
+  return t.steps.length && t.steps.every((s) => entStatus(t, lid, s.id).done) ? 1 : 0;
+}
+function perLabel(t, per, ty) {
+  if (per === 'unit') return `per ${t.unit || 'unit'}`;
+  if (per?.startsWith('f:')) { const f = (t.fields || []).find((x) => fieldKey(x) === per.slice(2)); const n = f?.label || 'count'; return `per ${n.replace(/s$/i, '')}`; }
+  return `per ${(ty?.name || 'location').toLowerCase()}`;
+}
 function computeNeeds() {
   const need = {};
   for (const t of S.trackers) {
     if (t.status === 'done' || !t.materials.length) continue;
-    const locs = S.scope[t.id];
-    for (const tm of t.materials) {
-      let rem = 0;
-      if (t.mode === 'qty') rem = locs.reduce((a, l) => a + Math.max(0, targetOf(t, l.id) - (ent(t, l.id)?.qty || 0)), 0);
-      else if (t.mode === 'status') rem = locs.filter((l) => !entStatus(t, l.id).done).length;
-      else if (tm.step_id) rem = locs.filter((l) => !entStatus(t, l.id, tm.step_id).done).length;
-      else rem = locs.filter((l) => !t.steps.length || t.steps.some((s) => !entStatus(t, l.id, s.id).done)).length;
-      need[tm.material_id] = (need[tm.material_id] || 0) + rem * tm.qty;
+    for (const tm of t.materials) for (const l of S.scope[t.id]) {
+      const left = 1 - kitProgress(t, tm, l.id);
+      if (left > 0) need[tm.material_id] = (need[tm.material_id] || 0) + kitTotal(t, tm, l.id) * left;
     }
   }
   for (const m of S.materials) need[m.id] = (need[m.id] || 0) + (m.extra_need || 0);
@@ -839,7 +860,7 @@ function closePanel() { $('#panel').hidden = true; $('#scrim').hidden = true; ui
 // Location hub: progress on every tracker, drawings, child plan, material
 function openLoc(lid, { trackerId } = {}) {
   const l = S.L[lid]; if (!l) return;
-  const st = { kind: 'loc', lid, trackerId, crew: null, book: true };
+  const st = { kind: 'loc', lid, trackerId, crew: null };
   const last = S.entries.filter((e) => e.l === lid && e.crew?.length).sort((a, b) => (b.at || '').localeCompare(a.at || ''))[0];
   st.crew = new Set(last?.crew || []);
   st.live = () => { if (S.L[lid]) setBody(locBody(st)); else closePanel(); };
@@ -857,7 +878,6 @@ function locBody(st) {
   const plan = S.mapFor[lid];
   const kids = S.kids[lid] || [];
   const anyClaims = trs.some((t) => t.claims);
-  const hasMats = trs.some((t) => t.materials.length && t.mode !== 'qty');
   const txns = S.txns.filter((t) => t.location_id === lid).slice(0, 12);
   const top = `<div class="row" style="margin-bottom:6px">${plan ? `<button class="btn sm sun" data-act="map-go" data-id="${plan.id}">Open ${esc(l.name)} plan</button>` : ''}
     ${S.manage && !plan && typeOf(l).shape !== 'pin' && S.types.some((ty) => ty.parent_type_id === l.type_id) ? `<button class="btn sm" data-act="map-upload" data-loc="${lid}">Add a plan for ${esc(l.name)}</button>` : ''}
@@ -868,8 +888,7 @@ function locBody(st) {
         <div class="cgroup">${locs.map((x) => { const s = locState(t, x.id); return `<button class="pv big k-${kindOf(s)}" style="--c:${esc(s.color)}" data-act="open-loc" data-id="${x.id}" data-t="${t.id}" title="${esc(x.name)}: ${esc(s.label)}" aria-label="${esc(x.name)}: ${esc(s.label)}"></button>`; }).join('')}</div>
         <div class="row" style="margin-top:8px"><button class="btn sm ghost" data-act="tracker-filter" data-t="${t.id}" data-p="${lid}">Open on check sheet</button></div></div>`; }).join('')}`
     : kids.length ? `<h3>Inside ${esc(l.name)}</h3><div class="chips">${kids.map((k) => `<button class="chip" data-act="open-loc" data-id="${k}">${esc(lname(k))}</button>`).join('')}</div>` : '';
-  const crewHtml = anyClaims ? `<h3>Who's on it <small class="hint" style="margin:0 0 0 auto;font-weight:400">Claims and updates are logged under these names</small></h3><div class="chips">${S.crew.map((n) => `<button class="chip" data-act="loc-crew" data-n="${esc(n)}" ${pressed(st.crew.has(n))}>${esc(n)}</button>`).join('') || '<span class="hint">Add people in Setup.</span>'}</div>
-    ${hasMats ? `<label class="check"><input type="checkbox" data-act="loc-book" ${st.book ? 'checked' : ''}> When something is marked done, log its material as installed</label>` : ''}` : '';
+  const crewHtml = anyClaims ? `<h3>Who's on it <small class="hint" style="margin:0 0 0 auto;font-weight:400">Claims and updates are logged under these names</small></h3><div class="chips">${S.crew.map((n) => `<button class="chip" data-act="loc-crew" data-n="${esc(n)}" ${pressed(st.crew.has(n))}>${esc(n)}</button>`).join('') || '<span class="hint">Add people in Setup.</span>'}</div>` : '';
   const trHtml = trs.map((t) => trackerControls(t, lid)).join('');
   return `${top}${docHtml}${crewHtml}${trs.length ? `<h3>Progress</h3>${trHtml}` : ''}${childHtml}
     ${!trs.length && !childTrs.length ? `<p class="hint">No trackers cover this ${esc(typeOf(l).name.toLowerCase())} yet.</p>` : ''}
@@ -898,13 +917,25 @@ function trackerControls(t, lid) {
     const attrs = `data-act="loc-field" data-t="${t.id}" data-l="${lid}" data-f="${esc(f.key)}"`;
     const input = f.type === 'check' ? `<label class="check"><input type="checkbox" ${attrs} ${v ? 'checked' : ''}> ${esc(f.label)}</label>`
       : f.type === 'select' ? `<select ${attrs}><option value=""></option>${f.options.map((o) => `<option ${v === o ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`
-      : `<input ${attrs} type="${f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text'}" step="any" value="${esc(v ?? '')}">`;
+      : `<input ${attrs} type="${f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text'}" step="any" value="${esc(v ?? '')}"${f.type === 'number' && f.default != null ? ` placeholder="${esc(q(f.default))} (default)"` : ''}>`;
     return f.type === 'check' ? `<div>${input}</div>` : `<label class="f"><span>${esc(f.label)}</span>${input}</label>`; }).join('')}</div>` : '';
   const docs = S.links.filter((lk) => lk.tracker_id === t.id && (lk.location_id === lid || !lk.location_id)).length;
   const cl = claimOf(t, lid); const mine = cl.includes(S.me.name);
   const claim = t.claims ? `<div class="claim ${cl.length ? 'on' : ''}">${cl.length ? `<span class="who-cl">Claimed by <b>${esc(cl.join(', '))}</b></span>` : '<span class="who-cl">Not claimed</span>'}
       <button class="btn sm ${cl.length && !mine ? '' : 'sun'}" data-act="claim" data-t="${t.id}" data-l="${lid}">${cl.length ? (mine && cl.length === 1 ? 'Unclaim' : 'Claim instead') : 'Claim'}</button></div>` : '';
-  return `<div class="tk"><div class="tk-h">${sw(t.color)}${esc(t.name)}<span class="pc k-${kindOf(s)}" style="--c:${esc(s.color)}">${esc(s.label)}</span></div>${claim}${inner}${fields}</div>`;
+  return `<div class="tk"><div class="tk-h">${sw(t.color)}${esc(t.name)}<span class="pc k-${kindOf(s)}" style="--c:${esc(s.color)}">${esc(s.label)}</span></div>${claim}${inner}${fields}${kitCard(t, lid)}</div>`;
+}
+// What this one location takes, and where that hardware is right now.
+function kitCard(t, lid) {
+  if (!t.materials.length || t.kit_mode === 'off') return '';
+  const ty = S.TY[t.type_id]; const cl = claimOf(t, lid); const holder = t.claims && t.kit_mode === 'claim' ? cl[0] : '';
+  const rows = t.materials.map((tm) => { const m = S.M[tm.material_id]; if (!m) return '';
+    const tot = kitTotal(t, tm, lid); const prog = kitProgress(t, tm, lid); const step = tm.step_id ? t.steps.find((x) => x.id === tm.step_id) : null;
+    const per = tm.per || 'each'; const mult = per.startsWith('f:') ? fieldCount(t, lid, per.slice(2)) : per === 'unit' ? targetOf(t, lid) : 0;
+    const basis = `${q(tm.qty)} ${perLabel(t, per, ty)}${mult ? ` × ${q(mult)}` : ''}${tm.extra_pct ? ` + ${q(tm.extra_pct)}% spare` : ''}${step ? `, at ${esc(step.name)}` : ''}`;
+    const state = prog >= 1 ? ['in', 'Installed'] : holder ? ['out', `Out with ${holder}`] : m.on_hand < tot ? ['short', `Only ${q(m.on_hand)} on hand`] : ['', 'In stock'];
+    return `<li class="${state[0]}"><span class="kq">${q(tot)}<small>${esc(m.unit && m.unit !== 'ea' ? m.unit : '')}</small></span><span class="kn">${esc(m.name)}<small>${basis}</small></span><span class="ks">${esc(state[1])}</span></li>`; }).join('');
+  return `<div class="kit"><div class="kit-h">Hardware for this ${esc((ty?.name || 'location').toLowerCase())}<small>${t.kit_mode === 'claim' ? (t.claims ? 'Goes out with whoever claims it. Counted installed when it\'s done.' : 'Counted installed when it\'s done.') : 'Counted installed from stock when it\'s done.'}</small></div><ul>${rows}</ul></div>`;
 }
 
 // Material panel
@@ -953,7 +984,8 @@ function openTrackerEdit(id) {
     kind: 'tr', id, preset: null, name: t.name, color: t.color, type_id: t.type_id, mode: t.mode, unit: t.unit, default_target: t.default_target,
     statuses: t.statuses.map((s) => ({ ...s })), fields: t.fields.map((f) => ({ ...f, options: [...(f.options || [])] })),
     steps: t.steps.map((s) => ({ id: s.id, name: s.name })),
-    mats: t.materials.map((tm) => ({ material_id: tm.material_id, step_index: tm.step_id ? t.steps.findIndex((s) => s.id === tm.step_id) : -1, qty: tm.qty })),
+    mats: t.materials.map((tm) => ({ material_id: tm.material_id, step_index: tm.step_id ? t.steps.findIndex((s) => s.id === tm.step_id) : -1, qty: tm.qty, per: tm.per || 'each', extra_pct: tm.extra_pct || '' })),
+    kit_mode: t.kit_mode || 'claim', apply_kits: false, kitTouched: false,
     scope: { mode: t.scope.mode || 'all', ids: new Set(t.scope.ids || []), zones: new Set(t.scope.zones || []) },
     claims: t.claims, show_map: t.show_map, status: t.status, due_date: t.due_date, description: t.description, linkPage: '', linkDwg: '',
   } : { kind: 'tr', id: null, preset: null };
@@ -967,7 +999,7 @@ function applyPreset(st, p) {
     preset: p.key, name: p.name || '', color: p.color || PALETTE[0], type_id: findType(p.type)?.id, mode: p.mode || 'steps', unit: p.unit || '', default_target: p.target || 0,
     statuses: (p.statuses || DEFAULT_STATUSES).map((s) => ({ key: s.key || '', label: s.label, color: s.color, done: !!s.done, problem: !!s.problem })),
     fields: (p.fields || []).map((f) => ({ label: f.label, type: f.type, options: f.options || [] })),
-    steps: (p.steps || (p.mode === 'steps' || !p.mode ? [''] : [])).map((n) => ({ name: n })), mats: [],
+    steps: (p.steps || (p.mode === 'steps' || !p.mode ? [''] : [])).map((n) => ({ name: n })), mats: [], kit_mode: 'claim',
     scope: { mode: 'all', ids: new Set(), zones: new Set() }, claims: true, show_map: true, status: 'active', due_date: '', description: '',
   });
 }
@@ -1002,6 +1034,7 @@ function trackerBody(st) {
   <ul class="ed-list fld">${st.fields.map((f, i) => `<li><input data-fdi="${i}" data-f="label" value="${esc(f.label)}" placeholder="Megger reading, Date landed, Torqued…">
       <select data-fdi="${i}" data-f="type">${[['text', 'Text'], ['number', 'Number'], ['date', 'Date'], ['check', 'Checkbox'], ['select', 'Pick list']].map(([v, l]) => `<option value="${v}" ${f.type === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <button type="button" class="ic" data-act="tr-fd-del" data-i="${i}" aria-label="Remove">×</button>
+      ${f.type === 'number' ? `<label class="opts fdef">Starts at <input data-fdi="${i}" data-f="default" type="number" step="any" min="0" value="${esc(f.default ?? '')}" placeholder="0" aria-label="Default for ${esc(f.label)}"> on each ${esc((ty?.name || 'location').toLowerCase())} until someone changes it</label>` : ''}
       ${f.type === 'select' ? `<input class="opts" data-fdi="${i}" data-f="options" value="${esc((f.options || []).join(', '))}" placeholder="Choices, separated by commas">` : ''}</li>`).join('')}</ul>
   <button type="button" class="btn sm" data-act="tr-fd-add">Add field</button>
 
@@ -1010,12 +1043,20 @@ function trackerBody(st) {
   ${st.scope.mode === 'zones' ? `<div class="chips">${zones.map((z) => `<button type="button" class="chip" data-act="tr-zone" data-z="${esc(z)}" ${pressed(st.scope.zones.has(z))}>${esc(z)}</button>`).join('')}</div>` : ''}
   ${st.scope.mode === 'parents' || st.scope.mode === 'pick' ? `<div class="chips" style="max-height:220px;overflow:auto">${pickPool.map((l) => `<button type="button" class="chip" data-act="tr-pickloc" data-id="${l.id}" ${pressed(st.scope.ids.has(l.id))}>${esc(l.name)}</button>`).join('') || '<span class="hint">None added yet.</span>'}</div>` : ''}
 
-  <h3>Material per ${st.mode === 'qty' ? esc(st.unit || 'unit') : esc((ty?.name || 'location').toLowerCase())}</h3>
-  <p class="hint">Drives "still need" on the materials list.${st.mode !== 'qty' ? ' When something is marked done, its material stops counting as needed.' : ''}</p>
-  ${S.materials.length ? `<ul class="ed-list mats">${st.mats.map((r, i) => `<li><select data-mi="${i}" data-f="material_id" aria-label="Material"><option value="">Material…</option>${S.materials.map((m) => `<option value="${m.id}" ${+r.material_id === m.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select>
-      ${st.mode === 'steps' ? `<select class="st" data-mi="${i}" data-f="step_index" aria-label="Step"><option value="-1">Whole tracker</option>${st.steps.map((s, j) => `<option value="${j}" ${+r.step_index === j ? 'selected' : ''}>${j + 1}. ${esc(s.name || 'Step')}</option>`).join('')}</select>` : '<span class="st"></span>'}
-      <input data-mi="${i}" data-f="qty" type="number" step="any" min="0" value="${esc(r.qty)}" placeholder="Qty" aria-label="Quantity"><button type="button" class="ic" data-act="tr-mat-del" data-i="${i}" aria-label="Remove">×</button></li>`).join('')}</ul>
-    <button type="button" class="btn sm" data-act="tr-mat-add">Add material</button>` : '<p class="hint">Add materials first, then link them here.</p>'}
+  <h3>Hardware & material kit <small style="color:var(--faint);font-weight:500">what one ${esc((ty?.name || 'location').toLowerCase())} takes</small></h3>
+  <div class="seg" role="group" style="margin-bottom:6px">${[['claim', 'Out on claim, installed when done'], ['done', 'Installed when done'], ['off', 'Forecast only']].map(([v, l]) => `<button type="button" data-act="tr-kitmode" data-v="${v}" ${pressed(st.kit_mode === v)}>${l}</button>`).join('')}</div>
+  <p class="hint">${st.kit_mode === 'claim' ? `Claiming a ${esc((ty?.name || 'location').toLowerCase())} puts its kit out with that person. Marking it done counts it installed. Unclaiming sends it back to stock.` : st.kit_mode === 'done' ? 'Nothing moves on claim. Marking it done takes the kit from stock as installed.' : "Nothing moves by itself. The kit only drives what's still needed on the materials list."} Either way, "still need" counts what the remaining work takes.</p>
+  ${S.materials.length ? `<ul class="ed-list mats">${st.mats.map((r, i) => { const perOpts = [['each', `Each ${(ty?.name || 'location').toLowerCase()}`], ...(st.mode === 'qty' ? [['unit', `Per ${st.unit || 'unit'}`]] : []), ...st.fields.filter((f) => f.type === 'number' && f.label.trim()).map((f) => [`f:${fieldKey(f)}`, `Per ${f.label.replace(/s$/i, '')}`]), ['__new', 'New count…']];
+      return `<li><select data-mi="${i}" data-f="material_id" aria-label="Material"><option value="">Material…</option>${S.materials.map((m) => `<option value="${m.id}" ${+r.material_id === m.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select>
+      <input data-mi="${i}" data-f="qty" type="number" step="any" min="0" value="${esc(r.qty)}" placeholder="Qty" aria-label="Quantity">
+      <select class="per" data-mi="${i}" data-f="per" aria-label="Counted">${perOpts.map(([v, l]) => `<option value="${esc(v)}" ${(r.per || 'each') === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+      <button type="button" class="ic" data-act="tr-mat-del" data-i="${i}" aria-label="Remove">×</button>
+      <span class="more">${st.mode === 'steps' ? `<select class="st" data-mi="${i}" data-f="step_index" aria-label="When it's used"><option value="-1">Used when all steps are done</option>${st.steps.map((s2, j) => `<option value="${j}" ${+r.step_index === j ? 'selected' : ''}>Used at ${j + 1}. ${esc(s2.name || 'Step')}</option>`).join('')}</select>` : ''}
+        <label class="spare">+<input data-mi="${i}" data-f="extra_pct" type="number" step="any" min="0" value="${esc(r.extra_pct || '')}" placeholder="0" aria-label="Spare percent">% spare</label>
+        <small class="kit-sum">${kitLineSummary(st, r)}</small></span></li>`; }).join('')}</ul>
+    <button type="button" class="btn sm" data-act="tr-mat-add">Add to kit</button>
+    ${st.id && st.kitTouched ? (() => { const n = kitAppliable(st.id); return n ? `<label class="check"><input type="checkbox" data-k="apply_kits" ${st.apply_kits ? 'checked' : ''}> Also apply this kit to the ${n} ${esc((n === 1 ? ty?.name : ty?.plural || 'locations').toLowerCase())} already claimed or done</label>` : ''; })() : ''}`
+    : '<p class="hint">Add materials first, then build the kit here.</p>'}
 
   <h3>Drawings for this tracker</h3>
   ${st.id ? `${myLinks.length ? `<ul class="hist">${myLinks.map((lk) => `<li><div><b>${esc(S.D[lk.drawing_id]?.sheet || '')} ${esc(S.D[lk.drawing_id]?.name || '')}</b>${lk.page ? `, page ${lk.page}` : ''}${lk.location_id ? ` <small>for ${esc(lname(lk.location_id))}</small>` : ''}</div><button type="button" class="btn sm ghost" data-act="link-del" data-id="${lk.id}">Remove</button></li>`).join('')}</ul>` : ''}
@@ -1031,6 +1072,18 @@ function trackerBody(st) {
   <div class="row" style="margin-top:18px"><button class="btn sun">${st.id ? 'Save tracker' : 'Create tracker'}</button>${st.id ? `<button type="button" class="btn danger" data-act="tracker-del" data-id="${st.id}">Delete tracker</button>` : ''}</div>
   ${st.id ? '<p class="hint" style="margin-top:10px">Changing "Tracked by" clears this tracker\'s progress.</p>' : ''}</form>`;
 }
+// One kit line in the editor: what it adds up to across this tracker, and how far the stock goes.
+function kitLineSummary(st, r) {
+  const m = S.M[+r.material_id]; if (!m || !(+r.qty > 0)) return '';
+  const fake = { id: st.id || -1, type_id: st.type_id, mode: st.mode, unit: st.unit, default_target: +st.default_target || 0, fields: st.fields.map((f) => ({ ...f, key: fieldKey(f) })), steps: st.id ? S.TR[st.id].steps : [], statuses: st.statuses, scope: { mode: st.scope.mode, ids: [...st.scope.ids], zones: [...st.scope.zones] } };
+  const tm = { material_id: m.id, qty: +r.qty, per: r.per || 'each', extra_pct: +r.extra_pct || 0, step_id: 0 };
+  const locs = scopeLocs(fake); if (!locs.length) return '';
+  let all = 0, left = 0; for (const l of locs) { const v = kitTotal(fake, tm, l.id); all += v; if (!(st.id && S.TR[st.id] && kitProgress(S.TR[st.id], tm, l.id) >= 1)) left += v; }
+  const each = all / locs.length; const ty = S.TY[st.type_id]; const u = m.unit && m.unit !== 'ea' ? ` ${m.unit}` : '';
+  const covers = each ? Math.floor(m.on_hand / each) : 0;
+  return `${q(all)}${u} for all ${locs.length} ${esc((ty?.plural || 'locations').toLowerCase())}${left !== all ? `, ${q(left)} still to go` : ''}. ${q(m.on_hand)} on hand covers about ${covers} more.`;
+}
+const kitAppliable = (tid) => new Set(S.entries.filter((e) => e.t === tid && ((e.crew || []).length || statusOf(S.TR[tid], e.status).done)).map((e) => e.l)).size;
 function readTracker(st) {
   const f = $('#panel form[data-form="tracker"]'); if (!f) return;
   $$('[data-k]', f).forEach((el) => { const k = el.dataset.k; st[k] = el.type === 'checkbox' ? el.checked : k === 'type_id' ? +el.value : el.value; });
@@ -1242,15 +1295,20 @@ async function tryLogin() {
 function signOut() { local.token = ''; S = null; gate = { status: null, name: '', pin: '', err: '' }; closePanel(); render(); }
 
 let toastTimer;
-function toast(msg, { bad = false } = {}) {
-  const t = $('#toast'); t.innerHTML = `<span>${esc(msg)}</span>`; t.className = 'show' + (bad ? ' bad' : '');
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.className = ''), 3400);
+function toast(msg, { bad = false, lines = [] } = {}) {
+  const t = $('#toast'); t.innerHTML = `<span>${esc(msg)}${lines.length ? `<ul class="kit-toast">${lines.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}</span>`; t.className = 'show' + (bad ? ' bad' : '');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.className = ''), lines.length ? 7000 : 3400);
+}
+// After a claim or status change: say what the kit did ("Kit out to Mike: 8 bolts, 10 straps").
+function kitToast(r, msg) {
+  const lines = (r?.kit || []).map((k) => k.text.charAt(0).toUpperCase() + k.text.slice(1));
+  if (r?.queued) return; if (lines.length) toast(msg || 'Hardware kit', { lines }); else if (msg) toast(msg);
 }
 
 // ── actions ───────────────────────────────────────────────────────────
 function go(v) { ui.view = v; location.hash = v; ui.selMode = false; ui.sel.clear(); closePanel(); render(); window.scrollTo(0, 0); }
 async function setEntries(t, locIds, stepIds, body) {
-  await mutate('POST', '/api/entries', { tracker_id: t.id, location_ids: locIds, step_ids: stepIds, ...body }, {
+  return mutate('POST', '/api/entries', { tracker_id: t.id, location_ids: locIds, step_ids: stepIds, ...body }, {
     queue: true,
     optimistic: () => { for (const l of locIds) for (const s of (t.mode === 'steps' && stepIds.length ? stepIds : [0])) {
       const key = `${t.id}:${l}:${s}`; let e = S.E[key];
@@ -1310,8 +1368,9 @@ const ACT = {
   'bulk-status': async (el) => {
     const t = S.TR[ui.trId]; const groups = {}; for (const k of ui.sel) { const [l, s] = k.split(':').map(Number); (groups[s] ||= []).push(l); }
     const n = ui.sel.size; ui.sel.clear(); ui.selMode = false;
-    for (const [s, ls] of Object.entries(groups)) await setEntries(t, ls, [+s], { status: el.dataset.s });
-    toast(`Updated ${n} ${n === 1 ? 'cell' : 'cells'} to ${statusOf(t, el.dataset.s).label}`);
+    const kit = [];
+    for (const [s, ls] of Object.entries(groups)) { const r = await setEntries(t, ls, [+s], { status: el.dataset.s }); kit.push(...(r?.kit || [])); }
+    kitToast({ kit }, `Updated ${n} ${n === 1 ? 'cell' : 'cells'} to ${statusOf(t, el.dataset.s).label}`);
   },
   'tracker-edit': (el) => openTrackerEdit(el.dataset.id ? +el.dataset.id : null),
   'tracker-del': async (el) => { if (!confirm('Delete this tracker and all of its progress?')) return; await mutate('DELETE', `/api/trackers/${el.dataset.id}`, undefined, { ok: 'Tracker deleted' }); closePanel(); },
@@ -1326,8 +1385,9 @@ const ACT = {
   'tr-st-del': (el) => trEdit((st) => st.statuses.splice(+el.dataset.i, 1))(),
   'tr-fd-add': () => trEdit((st) => st.fields.push({ label: '', type: 'text', options: [] }))(),
   'tr-fd-del': (el) => trEdit((st) => st.fields.splice(+el.dataset.i, 1))(),
-  'tr-mat-add': () => trEdit((st) => st.mats.push({ material_id: '', step_index: st.mode === 'steps' && st.steps.length ? 0 : -1, qty: '' }))(),
-  'tr-mat-del': (el) => trEdit((st) => st.mats.splice(+el.dataset.i, 1))(),
+  'tr-mat-add': () => trEdit((st) => { st.kitTouched = true; st.mats.push({ material_id: '', step_index: -1, qty: '', per: 'each', extra_pct: '' }); })(),
+  'tr-mat-del': (el) => trEdit((st) => { st.kitTouched = true; st.mats.splice(+el.dataset.i, 1); })(),
+  'tr-kitmode': (el) => trEdit((st) => { st.kit_mode = el.dataset.v; st.kitTouched = true; })(),
   'tr-scope': (el) => trEdit((st) => { st.scope.mode = el.dataset.v; st.scope.ids = new Set(); })(),
   'tr-zone': (el) => trEdit((st) => { const z = el.dataset.z; st.scope.zones.has(z) ? st.scope.zones.delete(z) : st.scope.zones.add(z); })(),
   'tr-pickloc': (el) => trEdit((st) => { const id = +el.dataset.id; st.scope.ids.has(id) ? st.scope.ids.delete(id) : st.scope.ids.add(id); })(),
@@ -1337,17 +1397,18 @@ const ACT = {
 
   // location hub
   'loc-crew': (el) => { const st = ui.panel; const n = el.dataset.n; st.crew.has(n) ? st.crew.delete(n) : st.crew.add(n); el.setAttribute('aria-pressed', st.crew.has(n)); },
-  'loc-book': (el) => { ui.panel.book = el.checked; },
   'loc-status': async (el) => {
     const st = ui.panel; const t = S.TR[+el.dataset.t]; const status = el.dataset.k;
-    await setEntries(t, [st.lid], [+el.dataset.s], { status, crew: t.claims ? [...st.crew] : undefined, log_materials: statusOf(t, status).done && st.book });
+    // steps mode: crew is recorded on the step. Status mode: crew is the claim, so don't take over someone else's.
+    const crew = !t.claims || !st.crew.size ? undefined : t.mode === 'steps' || !claimOf(t, st.lid).length ? [...st.crew] : undefined;
+    kitToast(await setEntries(t, [st.lid], [+el.dataset.s], { status, crew }));
   },
   claim: async (el) => {
     const t = S.TR[+el.dataset.t]; const lid = +el.dataset.l; const st = ui.panel;
     const cl = claimOf(t, lid); const mine = cl.includes(S.me.name) && cl.length === 1;
     const crew = mine ? [] : (st?.crew?.size ? [...st.crew] : [S.me.name]);
-    await setEntries(t, [lid], [], { crew });
-    toast(crew.length ? `${lname(lid)} claimed by ${crew.join(', ')}` : `${lname(lid)} unclaimed`);
+    const r = await setEntries(t, [lid], [], { crew });
+    kitToast(r, crew.length ? `${lname(lid)} claimed by ${crew.join(', ')}` : `${lname(lid)} unclaimed`);
   },
   'bulk-claim': async (el) => bulkClaim(el.dataset.act === 'bulk-claim'),
   'bulk-unclaim': async () => bulkClaim(false),
@@ -1417,8 +1478,8 @@ const ACT = {
 async function bulkClaim(on) {
   const t = S.TR[ui.trId]; const lids = [...new Set([...ui.sel].map((k) => +k.split(':')[0]))];
   ui.sel.clear(); ui.selMode = false;
-  await setEntries(t, lids, [], { crew: on ? [S.me.name] : [] });
-  toast(`${on ? 'Claimed' : 'Unclaimed'} ${lids.length} ${lids.length === 1 ? 'location' : 'locations'}`);
+  const r = await setEntries(t, lids, [], { crew: on ? [S.me.name] : [] });
+  kitToast(r, `${on ? 'Claimed' : 'Unclaimed'} ${lids.length} ${lids.length === 1 ? 'location' : 'locations'}`);
 }
 function moveStep(st, i, d) { const j = i + d; if (j < 0 || j >= st.steps.length) return; [st.steps[i], st.steps[j]] = [st.steps[j], st.steps[i]]; st.mats.forEach((r) => { if (+r.step_index === i) r.step_index = j; else if (+r.step_index === j) r.step_index = i; }); }
 
@@ -1443,8 +1504,8 @@ const FORMS = {
     const t = S.TR[+f.dataset.t]; const lid = +f.dataset.l; const st = ui.panel;
     if (e?.submitter?.name === 'set') { await mutate('POST', '/api/entries', { tracker_id: t.id, location_ids: [lid], target: f.target.value }, { ok: 'Target saved' }); return; }
     const add = parseFloat(f.add.value); if (!add) return toast('Enter an amount to add.', { bad: true });
-    await setEntries(t, [lid], [], { qty_add: add, crew: t.claims ? [...st.crew] : undefined });
-    toast(`Added ${q(add)} ${t.unit} to ${lname(lid)}`);
+    const r = await setEntries(t, [lid], [], { qty_add: add, crew: t.claims && st.crew.size && !claimOf(t, lid).length ? [...st.crew] : undefined });
+    kitToast(r, `Added ${q(add)} ${t.unit} to ${lname(lid)}`);
   },
   async mat(f) { const d = Object.fromEntries(new FormData(f)); if (f.dataset.id) await mutate('PUT', `/api/materials/${f.dataset.id}`, d, { ok: 'Material saved' }); else await mutate('POST', '/api/materials', d, { ok: `${d.name} added` }); closePanel(); },
   async import(f) { const r = await mutate('POST', '/api/materials/import', { csv: f.csv.value }); toast(`Imported: ${r.added} new, ${r.updated} updated`); closePanel(); },
@@ -1453,10 +1514,10 @@ const FORMS = {
     if (!st.name.trim()) return toast('Give the tracker a name.', { bad: true });
     if (st.id && S.TR[st.id].type_id !== st.type_id && !confirm('Changing what it is tracked by clears its progress. Continue?')) return;
     const idx = {}; let n = 0; st.steps.forEach((s, i) => { if (s.name.trim()) idx[i] = n++; });
-    const body = { name: st.name, color: st.color, type_id: st.type_id, mode: st.mode, unit: st.unit, default_target: st.default_target, status: st.status, due_date: st.due_date, description: st.description, claims: st.claims, show_map: st.show_map,
-      statuses: st.statuses.filter((s) => s.label.trim()), fields: st.fields.filter((f) => f.label.trim()), steps: st.mode === 'steps' ? st.steps.filter((s) => s.name.trim()) : [],
+    const body = { name: st.name, color: st.color, type_id: st.type_id, mode: st.mode, unit: st.unit, default_target: st.default_target, status: st.status, due_date: st.due_date, description: st.description, claims: st.claims, show_map: st.show_map, kit_mode: st.kit_mode, apply_kits: !!st.apply_kits,
+      statuses: st.statuses.filter((s) => s.label.trim()), fields: st.fields.filter((f) => f.label.trim()).map((f) => ({ ...f, key: fieldKey(f) })), steps: st.mode === 'steps' ? st.steps.filter((s) => s.name.trim()) : [],
       scope: { mode: st.scope.mode, ids: [...st.scope.ids], zones: [...st.scope.zones] },
-      materials: st.mats.filter((r) => r.material_id && +r.qty > 0).map((r) => ({ material_id: +r.material_id, qty: +r.qty, step_index: st.mode === 'steps' && +r.step_index >= 0 ? idx[+r.step_index] ?? null : null })) };
+      materials: st.mats.filter((r) => r.material_id && +r.qty > 0).map((r) => ({ material_id: +r.material_id, qty: +r.qty, per: r.per || 'each', extra_pct: +r.extra_pct || 0, step_index: st.mode === 'steps' && +r.step_index >= 0 ? idx[+r.step_index] ?? null : null })) };
     if (st.id) await mutate('PUT', `/api/trackers/${st.id}`, body, { ok: 'Tracker saved' });
     else { const r = await mutate('POST', '/api/trackers', body, { ok: `${st.name} created` }); ui.trId = r.id; }
     closePanel(); if (ui.view !== 'trackers') go('trackers');
@@ -1530,9 +1591,8 @@ document.addEventListener('change', async (e) => {
   if (a === 'map-pick') { ui.map.id = +el.value; ui.map.fitted = false; ui.map.assignType = null; render(); }
   if (a === 'map-assign') { ui.map.assignType = +el.value; ui.map.tool = S.TY[ui.map.assignType]?.shape === 'pin' ? 'pin' : (ui.map.tool === 'pin' ? 'box' : ui.map.tool); render(); }
   if (a === 'map-auto') { ui.map.auto = el.checked; render(); }
-  if (a === 'loc-book') ui.panel.book = el.checked;
   if (a === 'loc-notes') await mutate('PUT', `/api/locations/${ui.panel.lid}`, { notes: el.value }, { ok: 'Note saved' }).catch(() => {});
-  if (a === 'loc-field') { const t = S.TR[+el.dataset.t]; await setEntries(t, [+el.dataset.l], [], { values: { [el.dataset.f]: el.type === 'checkbox' ? el.checked : el.value } }).catch(() => {}); }
+  if (a === 'loc-field') { const t = S.TR[+el.dataset.t]; const r = await setEntries(t, [+el.dataset.l], [], { values: { [el.dataset.f]: el.type === 'checkbox' ? el.checked : el.value } }).catch(() => {}); kitToast(r); }
   if (a === 'import-file' && el.files[0]) $('#panel textarea[name=csv]').value = await el.files[0].text();
   if (a === 'dwg-auto-type') ui.panel.autoType = +el.value;
   if (a === 'blockset') { const o = el.closest('form').querySelector('.bs-opts'); o.hidden = !el.checked; el.closest('form').querySelector('[name=auto_type_id]').closest('label').hidden = el.checked; }
@@ -1541,6 +1601,18 @@ document.addEventListener('change', async (e) => {
   if (a === 'lk-tracker') ui.panel.tracker = el.value;
   if (el.closest('#panel form[data-form="tracker"]') && el.dataset.k === 'type_id') { const st = ui.panel; readTracker(st); st.scope = { mode: 'all', ids: new Set(), zones: new Set() }; st.paint(); }
   if (el.closest('#panel form[data-form="tracker"]') && el.dataset.f === 'type') { readTracker(ui.panel); ui.panel.paint(); }
+  if (el.closest('#panel form[data-form="tracker"]') && el.dataset.mi != null) {
+    const st = ui.panel; readTracker(st); st.kitTouched = true;
+    if (el.dataset.f === 'per' && el.value === '__new') {
+      const name = (prompt('What gets counted on each one? For example: LBD runs, Strings, Home runs, Conduits') || '').trim();
+      const row = st.mats[+el.dataset.mi];
+      if (name) { let f = st.fields.find((x) => x.label.trim().toLowerCase() === name.toLowerCase());
+        if (!f) { f = { label: name, type: 'number', options: [], default: 1 }; st.fields.push(f); } else f.type = 'number';
+        row.per = `f:${fieldKey(f)}`; toast(`Added "${name}" as a count. Set it on each one, it starts at ${q(f.default ?? 1)}.`); }
+      else row.per = 'each';
+    }
+    st.paint();
+  }
 });
 $('#scrim').addEventListener('click', closePanel);
 window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (h && h !== ui.view && VIEWS.some((v) => v.id === h)) { ui.view = h; render(); } });

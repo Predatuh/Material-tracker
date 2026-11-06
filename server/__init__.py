@@ -37,7 +37,10 @@ def _secret(data_dir):
 def _add_missing_columns():
     """Tiny forward-only migration: add columns introduced after a database was first created."""
     from sqlalchemy import inspect, text
-    wanted = {"location": [("code", "VARCHAR(80) DEFAULT ''")]}
+    wanted = {"location": [("code", "VARCHAR(80) DEFAULT ''")],
+              "tracker": [("kit_mode", "VARCHAR(10) DEFAULT 'claim'")],
+              "tracker_material": [("per", "VARCHAR(60) DEFAULT 'each'"), ("extra_pct", "FLOAT DEFAULT 0")],
+              "txn": [("auto", "VARCHAR(10) DEFAULT ''"), ("step_id", "INTEGER DEFAULT 0")]}
     insp = inspect(db.engine)
     with db.engine.begin() as conn:
         for table, cols in wanted.items():

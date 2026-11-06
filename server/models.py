@@ -132,6 +132,7 @@ class Tracker(db.Model):
     description = db.Column(db.Text, default="")
     due_date = db.Column(db.String(20), default="")
     status = db.Column(db.String(20), default="active")  # active | hold | done
+    kit_mode = db.Column(db.String(10), default="claim")  # claim: out to the crew on claim, installed when done | done | off
     sort = db.Column(db.Integer, default=0)
     created_at = db.Column(db.DateTime, default=now)
     steps = db.relationship("Step", backref="tracker", cascade="all, delete-orphan", order_by="Step.sort")
@@ -148,7 +149,7 @@ class Tracker(db.Model):
                 "statuses": self.status_list(), "fields": self.fields or [], "unit": self.unit or "",
                 "default_target": self.default_target or 0, "scope": self.scope or {"mode": "all"},
                 "claims": self.claims, "show_map": self.show_map, "description": self.description or "",
-                "due_date": self.due_date or "", "status": self.status, "sort": self.sort,
+                "due_date": self.due_date or "", "status": self.status, "sort": self.sort, "kit_mode": self.kit_mode or "claim",
                 "steps": [s.to_dict() for s in self.steps], "materials": [m.to_dict() for m in self.materials]}
 
 
@@ -215,9 +216,12 @@ class TrackerMaterial(db.Model):
     step_id = db.Column(db.Integer, default=0)
     material_id = db.Column(db.Integer, db.ForeignKey("material.id", ondelete="CASCADE"), nullable=False)
     qty = db.Column(db.Float, default=0)
+    per = db.Column(db.String(60), default="each")   # each | unit (qty mode) | f:<number field key>, e.g. f:lbd_runs
+    extra_pct = db.Column(db.Float, default=0)       # spare/overage added on top, in percent
 
     def to_dict(self):
-        return {"id": self.id, "step_id": self.step_id or 0, "material_id": self.material_id, "qty": self.qty or 0}
+        return {"id": self.id, "step_id": self.step_id or 0, "material_id": self.material_id, "qty": self.qty or 0,
+                "per": self.per or "each", "extra_pct": self.extra_pct or 0}
 
 
 class Txn(db.Model):
@@ -232,13 +236,15 @@ class Txn(db.Model):
     tracker_id = db.Column(db.Integer, nullable=True)
     note = db.Column(db.Text, default="")
     expected = db.Column(db.String(20), default="")
+    auto = db.Column(db.String(10), default="")      # "kit" when the app moved it from a claim or completion
+    step_id = db.Column(db.Integer, default=0)
     by = db.Column(db.String(80))
     at = db.Column(db.DateTime, default=now)
 
     def to_dict(self):
         return {"id": self.id, "material_id": self.material_id, "kind": self.kind, "qty": self.qty,
                 "source": self.source or "", "person": self.person or "", "location_id": self.location_id,
-                "tracker_id": self.tracker_id, "note": self.note or "", "expected": self.expected or "",
+                "tracker_id": self.tracker_id, "note": self.note or "", "expected": self.expected or "", "auto": self.auto or "",
                 "by": self.by, "at": iso(self.at)}
 
 
