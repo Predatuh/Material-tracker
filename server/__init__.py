@@ -34,6 +34,21 @@ def _secret(data_dir):
     return f.read_text().strip()
 
 
+def _add_missing_columns():
+    """Tiny forward-only migration: add columns introduced after a database was first created."""
+    from sqlalchemy import inspect, text
+    wanted = {"location": [("code", "VARCHAR(80) DEFAULT ''")]}
+    insp = inspect(db.engine)
+    with db.engine.begin() as conn:
+        for table, cols in wanted.items():
+            if not insp.has_table(table):
+                continue
+            have = {c["name"] for c in insp.get_columns(table)}
+            for name, ddl in cols:
+                if name not in have:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+
+
 def create_app():
     web = _base_dir() / "web"
     app = Flask(__name__, static_folder=None)
@@ -54,6 +69,7 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+        _add_missing_columns()
         if url.startswith("sqlite"):
             from sqlalchemy import event
             @event.listens_for(db.engine, "connect")

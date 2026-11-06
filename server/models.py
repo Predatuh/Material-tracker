@@ -102,13 +102,14 @@ class Location(db.Model):
     type_id = db.Column(db.Integer, db.ForeignKey("loc_type.id"), nullable=False)
     parent_id = db.Column(db.Integer, nullable=True)
     name = db.Column(db.String(80), nullable=False)
+    code = db.Column(db.String(80), default="")   # second ID from the drawings, e.g. INV31C105
     zone = db.Column(db.String(60), default="")
     sort = db.Column(db.Integer, default=0)
     notes = db.Column(db.Text, default="")
 
     def to_dict(self):
         return {"id": self.id, "type_id": self.type_id, "parent_id": self.parent_id, "name": self.name,
-                "zone": self.zone or "", "sort": self.sort, "notes": self.notes or ""}
+                "code": self.code or "", "zone": self.zone or "", "sort": self.sort, "notes": self.notes or ""}
 
 
 class Tracker(db.Model):

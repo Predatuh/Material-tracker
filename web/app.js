@@ -161,6 +161,7 @@ function derive() {
 }
 const typeOf = (l) => S.TY[l?.type_id] || { name: 'Location', plural: 'Locations', short: '' };
 const lname = (id) => S.L[id]?.name || '—';
+const lfull = (l) => l ? (l.code && l.code !== l.name ? `${l.name} · ${l.code}` : l.name) : '—';
 function scopeLocs(t) {
   const sc = t.scope || {}; const ids = new Set(sc.ids || []); const zones = new Set(sc.zones || []);
   return S.locations.filter((l) => {
@@ -491,7 +492,7 @@ function vTrackers() {
   const parentType = S.TY[ty.parent_type_id];
   let locs = S.scope[t.id];
   if (ui.trParent) locs = locs.filter((l) => S.anc[l.id].includes(+ui.trParent));
-  if (ui.trSearch) { const s = ui.trSearch.toLowerCase(); locs = locs.filter((l) => l.name.toLowerCase().includes(s)); }
+  if (ui.trSearch) { const s = ui.trSearch.toLowerCase(); locs = locs.filter((l) => `${l.name} ${l.code || ''} ${lfull(S.L[l.parent_id])}`.toLowerCase().includes(s)); }
   if (ui.trFilter === 'open') locs = locs.filter((l) => !locState(t, l.id).done);
   if (ui.trFilter === 'problem') locs = locs.filter((l) => locState(t, l.id).problem || (t.mode === 'steps' && t.steps.some((s) => entStatus(t, l.id, s.id).problem)));
   const parentsInScope = parentType ? [...new Set(S.scope[t.id].map((l) => l.parent_id).filter(Boolean))].map((id) => S.L[id]).filter(Boolean) : [];
@@ -501,8 +502,8 @@ function vTrackers() {
   const groups = []; let cur = null;
   for (const l of locs) { const g = parentType ? l.parent_id || 0 : 0; if (!cur || cur.g !== g) { cur = { g, locs: [] }; groups.push(cur); } cur.locs.push(l); }
   const ncol = cols.length + fcols.length + 1;
-  const body = groups.map((gr) => `${gr.g ? `<tr class="grp"><th colspan="${ncol}"><button data-act="${ui.selMode ? 'sel-group' : 'open-loc'}" data-id="${gr.g}" data-ids="${gr.locs.map((l) => l.id).join(',')}">${esc(lname(gr.g))}</button> <small style="color:var(--faint);font-weight:500">${gr.locs.length}</small></th></tr>` : ''}
-    ${gr.locs.map((l) => `<tr><th class="loc"><button data-act="${ui.selMode ? 'sel-row' : 'open-loc'}" data-id="${l.id}" data-t="${t.id}">${esc(l.name)}</button></th>
+  const body = groups.map((gr) => `${gr.g ? `<tr class="grp"><th colspan="${ncol}"><button data-act="${ui.selMode ? 'sel-group' : 'open-loc'}" data-id="${gr.g}" data-ids="${gr.locs.map((l) => l.id).join(',')}">${esc(lfull(S.L[gr.g]))}</button> <small style="color:var(--faint);font-weight:500">${gr.locs.length}</small></th></tr>` : ''}
+    ${gr.locs.map((l) => `<tr><th class="loc"><button data-act="${ui.selMode ? 'sel-row' : 'open-loc'}" data-id="${l.id}" data-t="${t.id}">${esc(l.name)}${l.code && l.code !== l.name ? `<small class="code">${esc(l.code)}</small>` : ''}</button></th>
       ${cols.map((c) => cellHtml(t, l, c)).join('')}
       ${fcols.map((c) => { const v = ent(t, l.id, 0)?.values?.[c.field.key]; return `<td><button class="cell val" data-act="open-loc" data-id="${l.id}" data-t="${t.id}">${v === true ? '✓' : esc(v ?? '')}</button></td>`; }).join('')}</tr>`).join('')}`).join('');
   const selbar = ui.selMode ? `<div class="selbar"><b>${ui.sel.size} selected</b>${t.statuses.map((s) => `<button class="btn sm" data-act="bulk-status" data-s="${esc(s.key)}" ${ui.sel.size ? '' : 'disabled'}>${sw(s.color)}${esc(s.label)}</button>`).join('')}<button class="btn sm ghost" data-act="sel-off">Cancel</button></div>` : '';
@@ -512,7 +513,7 @@ function vTrackers() {
       <p>${p.pct}% done. ${p.doneLocs} of ${p.total} ${esc((ty.plural || '').toLowerCase())} finished${p.problems ? `, ${p.problems} problem${p.problems > 1 ? 's' : ''}` : ''}${t.due_date ? `, due ${due(t.due_date)}` : ''}.${t.description ? ' ' + esc(t.description) : ''}</p></div>
     <div class="row">${S.manage ? `<button class="btn sm" data-act="tracker-edit" data-id="${t.id}">Edit tracker</button>` : ''}${t.mode !== 'qty' ? `<button class="btn sm ${ui.selMode ? 'sun' : ''}" data-act="sel-toggle">${ui.selMode ? 'Selecting' : 'Select several'}</button>` : ''}</div>
     ${docs.length ? `<div class="docs doc-chips">${docs.map((lk, i) => docChip(lk, i, 'tracker')).join('')}</div>` : ''}</div>
-  <div class="toolbar">${parentsInScope.length > 1 ? `<select data-act="tr-parent" aria-label="Filter by ${esc(parentType.name)}"><option value="">All ${esc(parentType.plural.toLowerCase())}</option>${parentsInScope.map((pl) => `<option value="${pl.id}" ${String(pl.id) === String(ui.trParent) ? 'selected' : ''}>${esc(pl.name)}</option>`).join('')}</select>` : ''}
+  <div class="toolbar">${parentsInScope.length > 1 ? `<select data-act="tr-parent" aria-label="Filter by ${esc(parentType.name)}"><option value="">All ${esc(parentType.plural.toLowerCase())}</option>${parentsInScope.map((pl) => `<option value="${pl.id}" ${String(pl.id) === String(ui.trParent) ? 'selected' : ''}>${esc(lfull(pl))}</option>`).join('')}</select>` : ''}
     <input type="search" id="tr-search" placeholder="Find ${esc((ty.name || '').toLowerCase())}" value="${esc(ui.trSearch)}">
     <div class="seg" role="group">${rf('all', 'All')}${rf('open', 'Not done')}${rf('problem', 'Problems')}</div></div>
   ${locs.length ? `<div class="matrix-wrap"><table class="matrix"><thead><tr><th class="loc">${esc(ty.name || '')}</th>
@@ -789,7 +790,7 @@ function locTree(ty) {
   const par = S.TY[ty.parent_type_id]; let last = null;
   return `<div class="loc-tree">${locs.map((l) => { const gh = par && l.parent_id !== last ? `<div class="lr" style="color:var(--sun);font-family:var(--disp);font-weight:700"><span></span><span>${esc(lname(l.parent_id))}</span><span></span></div>` : ''; last = l.parent_id;
     const k = (S.kids[l.id] || []).length;
-    return `${gh}<div class="lr ${par ? 'child' : ''}"><span>${S.mapFor[l.id] ? '<span class="tag live">plan</span>' : ''}</span><button class="nm" data-act="open-loc" data-id="${l.id}">${esc(l.name)} ${l.zone && !par ? `<span class="kids">${esc(l.zone)}</span>` : ''} ${k ? `<span class="kids">${k} inside</span>` : ''}</button>
+    return `${gh}<div class="lr ${par ? 'child' : ''}"><span>${S.mapFor[l.id] ? '<span class="tag live">plan</span>' : ''}</span><button class="nm" data-act="open-loc" data-id="${l.id}">${esc(l.name)} ${l.code && l.code !== l.name ? `<span class="kids">${esc(l.code)}</span>` : ''} ${l.zone && !par ? `<span class="kids">${esc(l.zone)}</span>` : ''} ${k ? `<span class="kids">${k} inside</span>` : ''}</button>
       ${S.manage ? `<button class="btn sm ghost" data-act="loc-edit" data-id="${l.id}">Edit</button>` : '<span></span>'}</div>`; }).join('')}</div>
     ${S.manage ? `<div class="row" style="margin-top:10px"><button class="btn sm danger" data-act="loc-del-all" data-id="${ty.id}">Remove all ${esc(ty.plural.toLowerCase())}</button></div>` : ''}`;
 }
@@ -815,7 +816,7 @@ function openLoc(lid, { trackerId } = {}) {
   let ref = ''; const site = S.maps.find((m) => m.id === ui.map.id) || S.maps.find((m) => !m.location_id);
   const a = site && S.areas.find((x) => x.map_id === site.id && (x.location_id === lid || S.anc[lid].includes(x.location_id)));
   if (a) { const g = { W: site.width || 2000, H: site.height || 1400, cols: 8 }; g.rows = Math.max(4, Math.round((8 * g.H) / g.W)); const c = areaCenter(a, g); ref = `grid ${gridRef(c.x, c.y, g)}`; }
-  openPanel(esc(l.name), esc([ty.name, par && `in ${par}`, l.zone, ref].filter(Boolean).join(' · ')), locBody(st), st);
+  openPanel(esc(l.name), esc([l.code, ty.name, par && `in ${par}`, l.zone, ref].filter(Boolean).join(' · ')), locBody(st), st);
 }
 function locBody(st) {
   const l = S.L[st.lid]; const lid = l.id;
@@ -881,7 +882,7 @@ function openMaterial(id, preset = {}) {
 }
 const kindsAllowed = () => Object.keys(KIND).filter((k) => !KIND[k].manage || S.manage);
 function locOptions(sel) {
-  return S.types.map((ty) => { const ls = S.locations.filter((l) => l.type_id === ty.id); return ls.length ? `<optgroup label="${esc(ty.plural)}">${ls.map((l) => `<option value="${l.id}" ${String(sel) === String(l.id) ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</optgroup>` : ''; }).join('');
+  return S.types.map((ty) => { const ls = S.locations.filter((l) => l.type_id === ty.id); return ls.length ? `<optgroup label="${esc(ty.plural)}">${ls.map((l) => `<option value="${l.id}" ${String(sel) === String(l.id) ? 'selected' : ''}>${esc(lfull(l))}</option>`).join('')}</optgroup>` : ''; }).join('');
 }
 function matBody(st) {
   const m = S.M[st.mat]; const i = matInfo(m); const k = KIND[st.act];
@@ -1016,7 +1017,7 @@ function openDrawing(id) {
 function dwgBody(st) {
   const d = S.D[st.id]; const links = S.links.filter((lk) => lk.drawing_id === d.id);
   const pages = Array.from({ length: Math.min(d.pages, 400) }, (_, i) => i + 1);
-  const linkChips = (pg) => links.filter((lk) => lk.page === pg).map((lk) => `<span class="chip static">${lk.location_id ? esc(lname(lk.location_id)) : ''}${lk.tracker_id ? `${lk.location_id ? ' · ' : ''}${esc(S.TR[lk.tracker_id]?.name || '')}` : ''}${S.manage ? ` <button class="btn sm ghost" style="min-height:20px;padding:0 2px" data-act="link-del" data-id="${lk.id}" aria-label="Remove link">×</button>` : ''}</span>`).join('');
+  const linkChips = (pg) => links.filter((lk) => lk.page === pg).map((lk) => `<span class="chip static">${lk.location_id ? esc(lfull(S.L[lk.location_id])) : ''}${lk.tracker_id ? `${lk.location_id ? ' · ' : ''}${esc(S.TR[lk.tracker_id]?.name || '')}` : ''}${S.manage ? ` <button class="btn sm ghost" style="min-height:20px;padding:0 2px" data-act="link-del" data-id="${lk.id}" aria-label="Remove link">×</button>` : ''}</span>`).join('');
   docGroups.dwg = pages.map((p) => ({ drawing_id: d.id, page: d.is_pdf ? p : 0, label: `Page ${p}` }));
   return `<div class="row" style="margin-bottom:12px"><button class="btn sun sm" data-act="view-docs" data-g="dwg" data-i="0">Open viewer</button><a class="btn sm" href="/api/drawings/${d.id}/file?t=${tok()}" target="_blank" rel="noopener">Original file</a></div>
   ${S.manage ? `<form data-form="dwg-meta" class="grid2"><label class="f"><span>Sheet</span><input name="sheet" value="${esc(d.sheet)}" placeholder="E-301"></label><label class="f"><span>Name</span><input name="name" value="${esc(d.name)}"></label><label class="f"><span>Rev</span><input name="rev" value="${esc(d.rev)}"></label><div style="align-self:end;margin-bottom:14px"><button class="btn sm">Save</button></div></form>` : ''}
@@ -1101,6 +1102,11 @@ function openDwgUpload(presetTracker) {
     <div class="grid2"><label class="f"><span>Sheet</span><input name="sheet" placeholder="E-301"></label><label class="f"><span>Rev</span><input name="rev" placeholder="IFC / 2"></label></div>
     <label class="f"><span>Name</span><input name="name" placeholder="Uses the file name if blank"></label>
     <label class="f"><span>Match pages to</span><select name="auto_type_id"><option value="">Don't match automatically</option>${S.types.map((ty) => `<option value="${ty.id}" ${ty.id === S.types[0]?.id ? 'selected' : ''}>${esc(ty.plural)} named on each page</option>`).join('')}</select></label>
+    <div class="fieldset"><label class="check" style="margin-top:0"><input type="checkbox" name="block_set" value="1" data-act="blockset"> This is a block layout set (one sheet per block, like "DC BLOCK LAYOUT - INV31C105")</label>
+      <div class="bs-opts" hidden><p class="hint">Makes a block for each sheet and numbers it with the big number marked on the sheet (your red 1–33), or in sheet-number order if there isn't one. It keeps the sheet's ID (INV31C105) as its drawing ID, and links that page to it. Blocks that already exist are matched by name or drawing ID instead of duplicated.</p>
+        <div class="grid2"><label class="f"><span>Blocks are</span><select name="block_type_id">${S.types.map((ty) => `<option value="${ty.id}" ${!ty.parent_type_id && ty.id === S.types.find((x) => !x.parent_type_id)?.id ? 'selected' : ''}>${esc(ty.plural)}</option>`).join('')}</select></label>
+          <label class="f"><span>Name them</span><input name="block_prefix" value="PB-" placeholder="PB-"></label></div>
+        <label class="f"><span>Transitions on each sheet ("(3) TR 31C105-01")</span><select name="tr_type_id"><option value="">Don't add them</option>${S.types.filter((ty) => ty.parent_type_id).map((ty) => `<option value="${ty.id}" ${ty.shape === 'pin' ? 'selected' : ''}>Add as ${esc(ty.plural.toLowerCase())}</option>`).join('')}</select></label></div></div>
     <label class="f"><span>Also attach to tracker</span><select name="tracker_id"><option value="">None</option>${S.trackers.map((t) => `<option value="${t.id}" ${String(presetTracker) === String(t.id) ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select></label>
     <p class="hint">Big IFC sets can take a minute to upload and read.</p><button class="btn sun">Upload</button></form>`);
 }
@@ -1136,7 +1142,7 @@ function openTypeEdit(id) {
 }
 function openLocEdit(id) {
   const l = S.L[id]; const ty = typeOf(l); const par = S.TY[ty.parent_type_id];
-  openPanel(`Edit ${esc(l.name)}`, esc(ty.name), `<form data-form="loc" data-id="${id}"><div class="grid2"><label class="f"><span>Name</span><input name="name" value="${esc(l.name)}" required></label><label class="f"><span>Zone</span><input name="zone" value="${esc(l.zone)}"></label></div>
+  openPanel(`Edit ${esc(l.name)}`, esc(ty.name), `<form data-form="loc" data-id="${id}"><div class="grid2"><label class="f"><span>Name</span><input name="name" value="${esc(l.name)}" required></label><label class="f"><span>Zone</span><input name="zone" value="${esc(l.zone)}"></label><label class="f"><span>Drawing ID</span><input name="code" value="${esc(l.code)}" placeholder="INV31C105"></label></div>
     ${par ? `<label class="f"><span>Inside</span><select name="parent_id"><option value="">None</option>${S.locations.filter((x) => x.type_id === par.id).map((x) => `<option value="${x.id}" ${x.id === l.parent_id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>` : ''}
     <label class="f"><span>Notes</span><textarea name="notes">${esc(l.notes)}</textarea></label>
     <div class="row"><button class="btn sun">Save</button><button type="button" class="btn danger" data-act="loc-del" data-id="${id}">Remove${(S.kids[id] || []).length ? ` with ${(S.kids[id] || []).length} inside` : ''}</button></div></form>`);
@@ -1397,7 +1403,9 @@ const FORMS = {
   },
   async 'dwg-upload'(f) {
     const b = f.querySelector('button'); b.disabled = true; b.textContent = 'Uploading and reading pages…';
-    try { const r = await mutate('POST', '/api/drawings', new FormData(f)); toast(r.linked ? `Uploaded. Matched ${r.linked} page${r.linked > 1 ? 's' : ''} to locations.` : 'Uploaded.'); openDrawing(r.id); if (ui.view !== 'drawings') { ui.view = 'drawings'; location.hash = 'drawings'; render(); } }
+    const fd = new FormData(f); if (fd.get('block_set')) fd.delete('auto_type_id');
+    try { const r = await mutate('POST', '/api/drawings', fd);
+      toast(r.blocks ? `Read ${r.blocks.pages} block sheets (numbered by ${r.blocks.numbered_by}): ${r.blocks.blocks} new blocks, ${r.blocks.linked} pages linked, ${r.blocks.transitions} transitions` : r.linked ? `Uploaded. Matched ${r.linked} page${r.linked > 1 ? 's' : ''} to locations.` : 'Uploaded.'); openDrawing(r.id); if (ui.view !== 'drawings') { ui.view = 'drawings'; location.hash = 'drawings'; render(); } }
     catch { b.disabled = false; b.textContent = 'Upload'; }
   },
   async 'dwg-meta'(f) { await mutate('PUT', `/api/drawings/${ui.panel.id}`, Object.fromEntries(new FormData(f)), { ok: 'Saved' }); },
@@ -1462,6 +1470,7 @@ document.addEventListener('change', async (e) => {
   if (a === 'loc-field') { const t = S.TR[+el.dataset.t]; await setEntries(t, [+el.dataset.l], [], { values: { [el.dataset.f]: el.type === 'checkbox' ? el.checked : el.value } }).catch(() => {}); }
   if (a === 'import-file' && el.files[0]) $('#panel textarea[name=csv]').value = await el.files[0].text();
   if (a === 'dwg-auto-type') ui.panel.autoType = +el.value;
+  if (a === 'blockset') { const o = el.closest('form').querySelector('.bs-opts'); o.hidden = !el.checked; el.closest('form').querySelector('[name=auto_type_id]').closest('label').hidden = el.checked; }
   if (a === 'area-type') { ui.panel.type = +el.value; setBody(ui.panel.list()); }
   if (a === 'lk-type') { ui.panel.type = +el.value; ui.panel.paint(); }
   if (a === 'lk-tracker') ui.panel.tracker = el.value;

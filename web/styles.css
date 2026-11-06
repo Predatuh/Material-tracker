@@ -832,3 +832,5 @@ input[type=color] { width: 44px; height: 40px; padding: 2px; border: var(--input
 .skin-box .keypad .go { background: var(--orange); }
 .skin-box #toast { font-family: "Marker"; font-size: 17px; padding: 12px 22px; box-shadow: 0 8px 20px rgba(0, 0, 0, .45); }
 .skin-box #toast.bad { color: var(--bad); }
+
+.matrix th.loc .code { display: block; font-size: 11px; opacity: .65; font-family: inherit; }

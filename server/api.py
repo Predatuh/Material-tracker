@@ -331,7 +331,7 @@ def add_locations():
 def edit_location(lid):
     l = get_or_404(Location, lid)
     d = request.get_json() or {}
-    for k in ("name", "zone", "notes"):
+    for k in ("name", "code", "zone", "notes"):
         if k in d:
             setattr(l, k, (d[k] or "").strip())
     if "parent_id" in d:
@@ -789,17 +789,94 @@ def _auto_link(dr, type_id, max_per_page=3):
     fitz = _fitz()
     doc = fitz.open(stream=dr.data, filetype="pdf")
     locs = Location.query.filter_by(type_id=type_id).all()
-    pats = [(l, _name_pattern(l.name)) for l in locs]
+    pats = [(l, [p for p in (_name_pattern(l.name), _name_pattern(l.code or "")) if p]) for l in locs]
+    have = {(lk.page, lk.location_id) for lk in DrawingLink.query.filter_by(drawing_id=dr.id).all()}
     made = 0
     for i, page in enumerate(doc, start=1):
         text = page.get_text() or ""
-        hits = [l for l, p in pats if p and p.search(text)]
+        hits = [l for l, ps in pats if any(p.search(text) for p in ps) and (i, l.id) not in have]
         if not hits or len(hits) > max_per_page:
             continue
         for l in hits:
             db.session.add(DrawingLink(drawing_id=dr.id, page=i, location_id=l.id))
             made += 1
     return made
+
+
+def _natkey(s):
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", s or "")]
+
+
+def _import_block_set(dr, opts):
+    """IFC block-layout sets (one sheet per inverter/power block, e.g. 'DC BLOCK LAYOUT - INV31C105'):
+    make or find a location per sheet, number them 1..N in sheet-number order, keep the sheet's ID as the
+    location's code, link the page, and optionally add the transitions ('(3) TR 31C105-01') under each block."""
+    fitz = _fitz()
+    doc = fitz.open(stream=dr.data, filetype="pdf")
+    title_re = re.compile(opts.get("title_regex") or r"LAYOUT\s*-\s*([A-Z0-9][A-Z0-9_\-]*[0-9])", re.I)
+    sheet_re = re.compile(r"\b(?:[A-Z0-9]+-){2,}([0-9]{3,5})\b")
+    tr_re = re.compile(r"\((\d+)\)\s*TR\s+([0-9A-Z]+-\d{1,3})", re.I)
+    found = []
+    for i, page in enumerate(doc, start=1):
+        text = page.get_text() or ""
+        m = title_re.search(text)
+        if not m:
+            continue
+        code = m.group(1).upper()
+        sheets = sheet_re.findall(text)
+        own = code[3:] if code.startswith("INV") else code
+        # a big hand-added number on the sheet (e.g. a red "27") is the crew's block number
+        marks = [s["text"].strip() for b in page.get_text("dict")["blocks"] for l in b.get("lines", []) for s in l["spans"]
+                 if s["size"] >= 40 and s["text"].strip().isdigit()]
+        found.append({"page": i, "code": code, "sheet": sheets[0] if sheets else "", "mark": int(marks[0]) if marks else None,
+                      "trs": sorted({(t.upper(), int(n)) for n, t in tr_re.findall(text) if t.upper().startswith(own) or own not in text}, key=lambda x: _natkey(x[0]))})
+    if not found:
+        return {"blocks": 0, "linked": 0, "transitions": 0, "pages": 0}
+    marks = [f["mark"] for f in found]
+    by_mark = all(m is not None for m in marks) and len(set(marks)) == len(marks)
+    if by_mark:
+        found.sort(key=lambda f: f["mark"])
+    elif all(f["sheet"] for f in found):
+        found.sort(key=lambda f: int(f["sheet"]))
+    else:
+        found.sort(key=lambda f: _natkey(f["code"]))
+    type_id = int(opts["type_id"])
+    prefix = opts.get("prefix", "PB-")
+    pad = max(2, len(str(len(found))))
+    tr_type = int(opts["tr_type_id"]) if opts.get("tr_type_id") else None
+    existing = Location.query.filter_by(type_id=type_id).all()
+    by_code = {(l.code or "").upper(): l for l in existing if l.code}
+    by_name = {l.name.upper(): l for l in existing}
+    base = (db.session.query(db.func.max(Location.sort)).scalar() or 0) + 1
+    made = linked = trs_made = 0
+    if by_mark:
+        pad = max(2, len(str(max(marks))))
+    for n, f in enumerate(found, start=1):
+        if by_mark:
+            n = f["mark"]
+        name = f"{prefix}{str(n).zfill(pad)}"
+        loc = by_code.get(f["code"]) or by_name.get(f["code"]) or by_name.get(name.upper())
+        if not loc:
+            loc = Location(type_id=type_id, name=name, code=f["code"], sort=base + n)
+            db.session.add(loc)
+            db.session.flush()
+            made += 1
+        elif not loc.code:
+            loc.code = f["code"]
+        if not DrawingLink.query.filter_by(drawing_id=dr.id, page=f["page"], location_id=loc.id).first():
+            db.session.add(DrawingLink(drawing_id=dr.id, page=f["page"], location_id=loc.id))
+            linked += 1
+        if tr_type and f["trs"]:
+            kids = {k.name.upper() for k in Location.query.filter_by(type_id=tr_type, parent_id=loc.id).all()}
+            for k, (tr, count) in enumerate(f["trs"]):
+                tname = f"TR {tr}"
+                if tname.upper() in kids:
+                    continue
+                db.session.add(Location(type_id=tr_type, parent_id=loc.id, name=tname, zone=loc.zone,
+                                        notes=f"({count}) on IFC sheet", sort=base + n * 100 + k))
+                trs_made += 1
+    return {"blocks": made, "linked": linked, "transitions": trs_made, "pages": len(found),
+            "numbered_by": "numbers marked on the sheets" if by_mark else "sheet number order" if all(f["sheet"] for f in found) else "sheet ID order"}
 
 
 @bp.post("/drawings")
@@ -833,11 +910,20 @@ def upload_drawing():
         db.session.add(DrawingLink(drawing_id=dr.id, page=0, tracker_id=int(fm["tracker_id"])))
     if fm.get("location_id"):
         db.session.add(DrawingLink(drawing_id=dr.id, page=0, location_id=int(fm["location_id"])))
-    if is_pdf and fm.get("auto_type_id"):
+    blocks = None
+    if is_pdf and fm.get("block_set") and fm.get("block_type_id"):
+        blocks = _import_block_set(dr, {"type_id": fm["block_type_id"], "prefix": fm.get("block_prefix", "PB-"),
+                                        "tr_type_id": fm.get("tr_type_id") or None})
+        linked = blocks["linked"]
+    elif is_pdf and fm.get("auto_type_id"):
         linked = _auto_link(dr, int(fm["auto_type_id"]))
-    log("drawing", f"Uploaded {dr.sheet + ' ' if dr.sheet else ''}{dr.name} ({pages} page{'s' if pages != 1 else ''})"
-        + (f", matched {linked} pages to locations" if linked else ""))
-    return done(id=dr.id, linked=linked)
+    msg = f"Uploaded {dr.sheet + ' ' if dr.sheet else ''}{dr.name} ({pages} page{'s' if pages != 1 else ''})"
+    if blocks:
+        msg += f": {blocks['pages']} block sheets, {blocks['blocks']} new blocks, {blocks['transitions']} transitions"
+    elif linked:
+        msg += f", matched {linked} pages to locations"
+    log("drawing", msg)
+    return done(id=dr.id, linked=linked, blocks=blocks)
 
 
 @bp.get("/drawings/<int:did>/file")
