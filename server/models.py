@@ -247,7 +247,7 @@ class SiteMap(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(120), default="Site plan")
     location_id = db.Column(db.Integer, nullable=True)
-    data = db.Column(db.LargeBinary)
+    data = db.deferred(db.Column(db.LargeBinary))  # only loaded when the file itself is needed
     mime = db.Column(db.String(40))
     width = db.Column(db.Integer)
     height = db.Column(db.Integer)
@@ -276,7 +276,7 @@ class Drawing(db.Model):
     name = db.Column(db.String(160), nullable=False)
     sheet = db.Column(db.String(40), default="")   # E-301
     rev = db.Column(db.String(20), default="")
-    data = db.Column(db.LargeBinary)
+    data = db.deferred(db.Column(db.LargeBinary))  # only loaded when the file itself is needed
     mime = db.Column(db.String(60))
     pages = db.Column(db.Integer, default=1)
     by = db.Column(db.String(80))

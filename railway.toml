@@ -2,6 +2,6 @@
 builder = "nixpacks"
 
 [deploy]
-startCommand = "gunicorn -w 2 --threads 4 -b 0.0.0.0:$PORT wsgi:app"
+startCommand = "gunicorn -w 1 --threads 8 --timeout 600 --graceful-timeout 30 -b 0.0.0.0:$PORT wsgi:app"
 healthcheckPath = "/api/status"
 restartPolicyType = "on_failure"

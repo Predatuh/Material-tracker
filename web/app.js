@@ -101,6 +101,27 @@ async function api(method, url, body, { queue = false } = {}) {
   if (!r.ok) throw new Error(data.error || `Something went wrong (${r.status}).`);
   return data;
 }
+// uploads use XHR so big IFC sets show progress instead of looking frozen
+function apiUpload(url, fd, onProgress) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest(); x.open('POST', url); x.setRequestHeader('Authorization', 'Bearer ' + local.token);
+    x.upload.onprogress = (e) => { if (e.lengthComputable) onProgress?.(e.loaded / e.total); };
+    x.upload.onload = () => onProgress?.(1);
+    x.onload = () => { let d = {}; try { d = JSON.parse(x.responseText); } catch {}
+      if (x.status >= 200 && x.status < 300) resolve(d);
+      else reject(new Error(d.error || (x.status === 413 ? 'That file is too big for the server (80 MB max).' : x.status >= 500 ? `The server hit an error (${x.status}). Try again; if it keeps happening, check the Railway logs.` : `Upload failed (${x.status}).`))); };
+    x.onerror = () => reject(new NetErr('Upload lost connection. Try again with better signal.'));
+    x.send(fd);
+  });
+}
+async function uploadWithProgress(f, url, fd, verb = 'Uploading') {
+  const b = f.querySelector('button.sun') || f.querySelector('button'); const label = b.textContent; b.disabled = true;
+  try {
+    const r = await apiUpload(url, fd, (p) => { b.textContent = p < 1 ? `${verb} ${Math.round(p * 100)}%` : 'Reading pages…'; });
+    await refresh(); return r;
+  } catch (e) { toast(e.message, { bad: true }); throw e; }
+  finally { b.disabled = false; b.textContent = label; }
+}
 let flushing = false;
 async function flushOutbox() {
   if (flushing || !local.token || !local.outbox.length || !navigator.onLine) return;
@@ -1399,16 +1420,14 @@ const FORMS = {
   async 'map-upload'(f) {
     const fd = new FormData(f); const file = fd.get('file');
     if (file?.type?.startsWith('image/')) { const dims = await new Promise((res) => { const img = new Image(); img.onload = () => res([img.naturalWidth, img.naturalHeight]); img.onerror = () => res([0, 0]); img.src = URL.createObjectURL(file); }); fd.set('width', dims[0]); fd.set('height', dims[1]); }
-    const b = f.querySelector('button'); b.disabled = true; b.textContent = 'Uploading…';
-    try { const r = await mutate('POST', '/api/map', fd, { ok: 'Plan added' }); ui.map.id = r.id; ui.map.fitted = false; ui.map.assignType = null; closePanel(); if (ui.view !== 'map') go('map'); else render(); }
-    catch { b.disabled = false; b.textContent = 'Upload'; }
+    try { const r = await uploadWithProgress(f, '/api/map', fd); toast('Plan added'); ui.map.id = r.id; ui.map.fitted = false; ui.map.assignType = null; closePanel(); if (ui.view !== 'map') go('map'); else render(); }
+    catch { /* toast shown */ }
   },
   async 'dwg-upload'(f) {
-    const b = f.querySelector('button'); b.disabled = true; b.textContent = 'Uploading and reading pages…';
     const fd = new FormData(f); if (fd.get('block_set')) fd.delete('auto_type_id');
-    try { const r = await mutate('POST', '/api/drawings', fd);
+    try { const r = await uploadWithProgress(f, '/api/drawings', fd);
       toast(r.blocks ? `Read ${r.blocks.pages} block sheets (numbered by ${r.blocks.numbered_by}): ${r.blocks.blocks} new blocks, ${r.blocks.linked} pages linked, ${r.blocks.transitions} transitions` : r.linked ? `Uploaded. Matched ${r.linked} page${r.linked > 1 ? 's' : ''} to locations.` : 'Uploaded.'); openDrawing(r.id); if (ui.view !== 'drawings') { ui.view = 'drawings'; location.hash = 'drawings'; render(); } }
-    catch { b.disabled = false; b.textContent = 'Upload'; }
+    catch { /* toast shown */ }
   },
   async 'dwg-meta'(f) { await mutate('PUT', `/api/drawings/${ui.panel.id}`, Object.fromEntries(new FormData(f)), { ok: 'Saved' }); },
   async 'page-map'(f) { const d = Object.fromEntries(new FormData(f)); const r = await mutate('POST', '/api/map/from-drawing', { drawing_id: +f.dataset.d, page: +f.dataset.p, location_id: d.location_id ? +d.location_id : null, name: d.name }, { ok: 'Plan made' }); ui.map.id = r.id; ui.map.fitted = false; ui.map.assignType = null; closePanel(); go('map'); },

@@ -62,8 +62,12 @@ def create_app():
     ephemeral = on_cloud and not os.environ.get("DATABASE_URL") and not vol
     if ephemeral:
         print("WARNING: no DATABASE_URL — data will be lost on restart. Link a Postgres DATABASE_URL to this service.", flush=True)
-    if url.startswith("postgres://"):
-        url = url.replace("postgres://", "postgresql://", 1)
+    # Railway/Heroku give postgres:// or postgresql://. Pin the driver we ship (psycopg2) so a newer
+    # SQLAlchemy that defaults to psycopg 3 doesn't crash on boot.
+    for pre in ("postgres://", "postgresql://"):
+        if url.startswith(pre):
+            url = "postgresql+psycopg2://" + url[len(pre):]
+            break
     app.config.update(
         SQLALCHEMY_DATABASE_URI=url,
         SQLALCHEMY_ENGINE_OPTIONS={"pool_pre_ping": True},

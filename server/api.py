@@ -761,18 +761,36 @@ def _fitz():
     return fitz
 
 
+_doc_cache = OrderedDict()
+
+
+def _open_doc(dr):
+    """Keep the last couple of parsed PDFs so flipping pages doesn't re-read a 50 MB file each time."""
+    key = (dr.id, dr.created_at)
+    if key in _doc_cache:
+        _doc_cache.move_to_end(key)
+        return _doc_cache[key]
+    doc = _fitz().open(stream=dr.data, filetype="pdf")
+    _doc_cache[key] = doc
+    while len(_doc_cache) > 2:
+        _doc_cache.popitem(last=False)
+    return doc
+
+
 def _render_page(dr, page, width):
     key = (dr.id, page, width, dr.created_at)
     if key in _page_cache:
         _page_cache.move_to_end(key)
         return _page_cache[key]
     fitz = _fitz()
-    doc = fitz.open(stream=dr.data, filetype="pdf")
+    doc = _open_doc(dr)
     p = doc[min(max(page, 1), len(doc)) - 1]
     zoom = width / max(p.rect.width, 1)
     png = p.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False).tobytes("png")
+    del p
+    fitz.TOOLS.store_shrink(100)
     _page_cache[key] = png
-    while len(_page_cache) > 60:
+    while len(_page_cache) > 24:
         _page_cache.popitem(last=False)
     return png
 
@@ -785,17 +803,20 @@ def _name_pattern(name):
     return re.compile(r"(?<![A-Za-z0-9])" + r"[\s\-_./#]*".join(parts) + r"(?![0-9])", re.I)
 
 
-def _auto_link(dr, type_id, max_per_page=3):
+def _auto_link(dr, type_id, max_per_page=3, doc=None):
     """Find location names in each page's text and link those pages. Overview sheets that mention
     lots of locations are skipped so a PB only gets its own sheets."""
     fitz = _fitz()
-    doc = fitz.open(stream=dr.data, filetype="pdf")
+    doc = doc or fitz.open(stream=dr.data, filetype="pdf")
     locs = Location.query.filter_by(type_id=type_id).all()
     pats = [(l, [p for p in (_name_pattern(l.name), _name_pattern(l.code or "")) if p]) for l in locs]
     have = {(lk.page, lk.location_id) for lk in DrawingLink.query.filter_by(drawing_id=dr.id).all()}
     made = 0
-    for i, page in enumerate(doc, start=1):
-        text = page.get_text() or ""
+    for i in range(1, len(doc) + 1):
+        tp = doc[i - 1].get_textpage(flags=0)
+        text = tp.extractText() or ""
+        del tp
+        fitz.TOOLS.store_shrink(100)
         hits = [l for l, ps in pats if any(p.search(text) for p in ps) and (i, l.id) not in have]
         if not hits or len(hits) > max_per_page:
             continue
@@ -803,6 +824,19 @@ def _auto_link(dr, type_id, max_per_page=3):
             db.session.add(DrawingLink(drawing_id=dr.id, page=i, location_id=l.id))
             made += 1
     return made
+
+
+def _store_blob(table, row_id, raw, chunk=4 * 1024 * 1024):
+    """Write a big file into the database. On Postgres it's appended in 4 MB pieces so the driver never builds
+    one giant escaped copy of the whole file in memory (a 46 MB IFC set otherwise costs ~250 MB of RAM)."""
+    from sqlalchemy import text
+    if db.engine.dialect.name != "postgresql" or len(raw) <= chunk:
+        db.session.execute(text(f"UPDATE {table} SET data = :d WHERE id = :i"), {"d": raw, "i": row_id})
+        return
+    db.session.execute(text(f"UPDATE {table} SET data = ''::bytea WHERE id = :i"), {"i": row_id})
+    mv = memoryview(raw)
+    for off in range(0, len(raw), chunk):
+        db.session.execute(text(f"UPDATE {table} SET data = data || :c WHERE id = :i"), {"c": bytes(mv[off:off + chunk]), "i": row_id})
 
 
 def _natkey(s):
@@ -814,22 +848,27 @@ def _import_block_set(dr, opts):
     make or find a location per sheet, number them 1..N in sheet-number order, keep the sheet's ID as the
     location's code, link the page, and optionally add the transitions ('(3) TR 31C105-01') under each block."""
     fitz = _fitz()
-    doc = fitz.open(stream=dr.data, filetype="pdf")
+    doc = opts.get("doc") or fitz.open(stream=dr.data, filetype="pdf")
     title_re = re.compile(opts.get("title_regex") or r"LAYOUT\s*-\s*([A-Z0-9][A-Z0-9_\-]*[0-9])", re.I)
     sheet_re = re.compile(r"\b(?:[A-Z0-9]+-){2,}([0-9]{3,5})\b")
     tr_re = re.compile(r"\((\d+)\)\s*TR\s+([0-9A-Z]+-\d{1,3})", re.I)
     found = []
-    for i, page in enumerate(doc, start=1):
-        text = page.get_text() or ""
+    for i in range(1, len(doc) + 1):
+        tp = doc[i - 1].get_textpage(flags=0)
+        text = tp.extractText() or ""
         m = title_re.search(text)
         if not m:
+            del tp
+            fitz.TOOLS.store_shrink(100)
             continue
         code = m.group(1).upper()
         sheets = sheet_re.findall(text)
         own = code[3:] if code.startswith("INV") else code
         # a big hand-added number on the sheet (e.g. a red "27") is the crew's block number
-        marks = [s["text"].strip() for b in page.get_text("dict")["blocks"] for l in b.get("lines", []) for s in l["spans"]
+        marks = [s["text"].strip() for b in tp.extractDICT()["blocks"] for l in b.get("lines", []) for s in l["spans"]
                  if s["size"] >= 40 and s["text"].strip().isdigit()]
+        del tp
+        fitz.TOOLS.store_shrink(100)  # free MuPDF's page cache; big IFC sheets otherwise pile up hundreds of MB
         found.append({"page": i, "code": code, "sheet": sheets[0] if sheets else "", "mark": int(marks[0]) if marks else None,
                       "trs": sorted({(t.upper(), int(n)) for n, t in tr_re.findall(text) if t.upper().startswith(own) or own not in text}, key=lambda x: _natkey(x[0]))})
     if not found:
@@ -891,12 +930,12 @@ def upload_drawing():
     is_pdf = fname.lower().endswith(".pdf") or mime == "application/pdf"
     if not is_pdf and not mime.startswith("image/"):
         return err("Upload a PDF, PNG or JPG.")
-    pages = 1
+    pages, doc = 1, None
     if is_pdf:
         mime = "application/pdf"
         try:
-            fitz = _fitz()
-            pages = len(fitz.open(stream=raw, filetype="pdf"))
+            doc = _fitz().open(stream=raw, filetype="pdf")
+            pages = len(doc)
         except ImportError:
             return err("PDF drawings need PyMuPDF on the server.")
         except Exception:
@@ -904,9 +943,10 @@ def upload_drawing():
     fm = request.form
     dr = Drawing(name=(fm.get("name") or re.sub(r"\.[a-z0-9]+$", "", fname, flags=re.I)).strip(),
                  sheet=(fm.get("sheet") or "").strip(), rev=(fm.get("rev") or "").strip(),
-                 data=raw, mime=mime, pages=pages, by=g.user.name)
+                 data=b"", mime=mime, pages=pages, by=g.user.name)
     db.session.add(dr)
     db.session.flush()
+    _store_blob("drawing", dr.id, raw)
     linked = 0
     if fm.get("tracker_id"):
         db.session.add(DrawingLink(drawing_id=dr.id, page=0, tracker_id=int(fm["tracker_id"])))
@@ -914,11 +954,11 @@ def upload_drawing():
         db.session.add(DrawingLink(drawing_id=dr.id, page=0, location_id=int(fm["location_id"])))
     blocks = None
     if is_pdf and fm.get("block_set") and fm.get("block_type_id"):
-        blocks = _import_block_set(dr, {"type_id": fm["block_type_id"], "prefix": fm.get("block_prefix", "PB-"),
+        blocks = _import_block_set(dr, {"doc": doc, "type_id": fm["block_type_id"], "prefix": fm.get("block_prefix", "PB-"),
                                         "tr_type_id": fm.get("tr_type_id") or None})
         linked = blocks["linked"]
     elif is_pdf and fm.get("auto_type_id"):
-        linked = _auto_link(dr, int(fm["auto_type_id"]))
+        linked = _auto_link(dr, int(fm["auto_type_id"]), doc=doc)
     msg = f"Uploaded {dr.sheet + ' ' if dr.sheet else ''}{dr.name} ({pages} page{'s' if pages != 1 else ''})"
     if blocks:
         msg += f": {blocks['pages']} block sheets, {blocks['blocks']} new blocks, {blocks['transitions']} transitions"
@@ -943,7 +983,7 @@ def drawing_page(did, page):
     dr = get_or_404(Drawing, did)
     if dr.mime != "application/pdf":
         return Response(dr.data, mimetype=dr.mime, headers={"Cache-Control": "private, max-age=604800"})
-    width = int(clamp_num(request.args.get("w"), 400, 4000, 1800))
+    width = int(clamp_num(request.args.get("w"), 400, 3200, 1800))
     return Response(_render_page(dr, page, width), mimetype="image/png",
                     headers={"Cache-Control": "private, max-age=604800"})
 
