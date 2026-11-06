@@ -1007,6 +1007,11 @@ def edit_drawing(did):
     for k in ("name", "sheet", "rev"):
         if k in d:
             setattr(dr, k, (d[k] or "").strip())
+    if d.get("block_type_id") and dr.mime == "application/pdf":
+        res = _import_block_set(dr, {"type_id": d["block_type_id"], "prefix": d.get("block_prefix", "PB-"),
+                                     "tr_type_id": d.get("tr_type_id") or None})
+        log("drawing", f"Read {res['pages']} block sheets from {dr.name}: {res['blocks']} new blocks, {res['linked']} pages linked, {res['transitions']} transitions")
+        return done(blocks=res)
     if d.get("auto_type_id") and dr.mime == "application/pdf":
         DrawingLink.query.filter(DrawingLink.drawing_id == dr.id, DrawingLink.location_id.isnot(None),
                                  DrawingLink.page > 0).delete(synchronize_session=False)

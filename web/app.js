@@ -502,7 +502,9 @@ function gauge(m, i) {
 // ── Trackers ──────────────────────────────────────────────────────────
 function vTrackers() {
   const tools = S.manage ? `<button class="btn sm sun" data-act="tracker-edit">New tracker</button><a class="btn sm" href="/api/export/progress.csv?t=${tok()}">Export</a>` : '';
-  if (!S.locations.length) return head('Trackers', '', tools) + emptyBox('Add your locations first', 'Trackers follow work across power blocks, rows, transitions or whatever you set up. Add them in Setup.', '<button class="btn sun" data-act="go" data-v="setup">Open setup</button>');
+  const ifc = S.drawings.find((d) => d.is_pdf);
+  if (!S.locations.length) return head('Trackers', '', tools) + emptyBox('Add your locations first', `Trackers follow work across power blocks, rows, transitions or whatever you set up. ${ifc ? 'Your IFC block sheets can add all the blocks and transitions at once.' : 'Add them in Setup, or upload your IFC block layout set on Prints.'}`,
+    `${ifc && S.manage ? `<button class="btn sun" data-act="open-dwg-go" data-id="${ifc.id}">Read them from ${esc(ifc.name.slice(0, 32))}</button>` : ''}<button class="btn ${ifc ? '' : 'sun'}" data-act="go" data-v="setup">Open setup</button>`);
   if (!S.trackers.length) return head('Trackers', '', tools) + emptyBox('No trackers yet', 'Start from DC strings by row, transitions, PB terminations, cable footage or an inspection checklist, then change anything.', S.manage ? '<button class="btn sun" data-act="tracker-edit">Create a tracker</button>' : '');
   const t = S.TR[ui.trId]; const ty = S.TY[t.type_id] || {}; const p = progress(t);
   const pills = S.trackers.map((x) => { const px = progress(x); return `<button class="tr-pill" data-act="pick-tracker" data-id="${x.id}" ${x.id === t.id ? 'aria-current="true"' : ''}>
@@ -540,7 +542,10 @@ function vTrackers() {
     <div class="seg" role="group">${rf('all', 'All')}${rf('open', 'Not done')}${rf('problem', 'Problems')}</div></div>
   ${locs.length ? `<div class="matrix-wrap"><table class="matrix"><thead><tr><th class="loc">${esc(ty.name || '')}</th>
     ${cols.map((c) => `<th><button data-act="sel-col" data-k="${c.k}">${c.label}</button></th>`).join('')}${fcols.map((c) => `<th>${c.label}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table></div>`
-    : `<p class="hint">No ${esc((ty.plural || '').toLowerCase())} match.${!S.scope[t.id].length ? ` This tracker has nothing in scope. Add ${esc((ty.plural || '').toLowerCase())} in Setup or widen the scope.` : ''}</p>`}
+    : !S.scope[t.id].length ? emptyBox(`No ${esc((ty.plural || '').toLowerCase())} on this job yet`,
+        `This tracker runs on ${esc((ty.plural || '').toLowerCase())}, and there aren't any yet, so there's nothing to claim or check off. ${S.drawings.some((d) => d.is_pdf) ? `If they're on your IFC block sheets, open the drawing and use "Read block sheets" to add them all.` : `Upload your IFC block layout set on Prints with "block layout set" checked to add them, or add them in Setup.`}`,
+        S.manage ? `${S.drawings.find((d) => d.is_pdf) ? `<button class="btn sun" data-act="open-dwg-go" data-id="${S.drawings.find((d) => d.is_pdf).id}">Read them from ${esc(S.drawings.find((d) => d.is_pdf).name.slice(0, 32))}</button>` : '<button class="btn sun" data-act="dwg-upload">Upload IFC set</button>'}<button class="btn" data-act="go" data-v="setup">Add in Setup</button>` : '')
+    : `<p class="hint">No ${esc((ty.plural || '').toLowerCase())} match.</p>`}
   ${selbar}`;
 }
 function cellHtml(t, l, c) {
@@ -1052,6 +1057,11 @@ function dwgBody(st) {
   ${S.manage ? `<form data-form="dwg-meta" class="grid2"><label class="f"><span>Sheet</span><input name="sheet" value="${esc(d.sheet)}" placeholder="E-301"></label><label class="f"><span>Name</span><input name="name" value="${esc(d.name)}"></label><label class="f"><span>Rev</span><input name="rev" value="${esc(d.rev)}"></label><div style="align-self:end;margin-bottom:14px"><button class="btn sm">Save</button></div></form>` : ''}
   ${S.manage && d.is_pdf ? `<div class="fieldset"><span class="lbl">Match pages to names automatically</span><p class="hint">Reads the text on each page and links it to the ${esc('location')} named there. Pages that mention more than 3 (like key plans) are skipped. Scanned PDFs with no text can't be matched; link those by hand.</p>
     <div class="row"><select data-act="dwg-auto-type" style="width:auto">${S.types.map((ty) => `<option value="${ty.id}" ${ty.id === st.autoType ? 'selected' : ''}>${esc(ty.plural)}</option>`).join('')}</select><button class="btn sm" data-act="dwg-auto">Match pages</button></div></div>` : ''}
+  ${S.manage && d.is_pdf ? `<div class="fieldset"><span class="lbl">Block layout set</span><p class="hint">For IFC sets with one sheet per block ("DC BLOCK LAYOUT - INV31C105"): makes or finds a block for each sheet, numbers it from the number marked on the sheet, links the page, and adds the "(3) TR …" transitions under each block. Safe to run again; nothing gets duplicated.</p>
+    <div class="grid2"><label class="f"><span>Blocks are</span><select data-k="bt">${S.types.map((ty) => `<option value="${ty.id}" ${ty.id === S.types.find((x) => !x.parent_type_id)?.id ? 'selected' : ''}>${esc(ty.plural)}</option>`).join('')}</select></label>
+      <label class="f"><span>Name them</span><input data-k="bp" value="PB-"></label>
+      <label class="f"><span>Transitions</span><select data-k="tt"><option value="">Don't add</option>${S.types.filter((ty) => ty.parent_type_id).map((ty) => `<option value="${ty.id}" ${ty.shape === 'pin' ? 'selected' : ''}>Add as ${esc(ty.plural.toLowerCase())}</option>`).join('')}</select></label></div>
+    <button class="btn sm sun" data-act="dwg-blocks">Read block sheets</button></div>` : ''}
   ${links.filter((lk) => !lk.page).length ? `<h3>Whole file is linked to</h3><div class="chips">${linkChips(0)}</div>` : ''}
   ${S.manage ? `<div class="row" style="margin-top:12px"><button class="btn sm" data-act="link-page" data-p="0">Link whole file</button></div>` : ''}
   <h3>Pages</h3><ul class="pg-list">${pages.map((p) => `<li><span class="pg">${d.is_pdf ? `p${p}` : 'Image'}</span><div class="chips">${linkChips(d.is_pdf ? p : 0) || '<span class="hint" style="margin:0">Not linked</span>'}</div>
@@ -1351,8 +1361,16 @@ const ACT = {
   // drawings
   'dwg-upload': () => openDwgUpload(),
   'open-dwg': (el) => openDrawing(+el.dataset.id),
+  'open-dwg-go': (el) => { const id = +el.dataset.id; go('drawings'); openDrawing(id); setTimeout(() => $('#panel [data-act=dwg-blocks]')?.scrollIntoView({ block: 'center' }), 80); },
   'view-docs': (el) => openViewer(docGroups[el.dataset.g], +el.dataset.i),
   'dwg-auto': async () => { const st = ui.panel; const r = await mutate('PUT', `/api/drawings/${st.id}`, { auto_type_id: st.autoType }); toast(r.linked ? `Matched ${r.linked} page${r.linked > 1 ? 's' : ''}` : 'No pages matched. Link them by hand.', { bad: !r.linked }); },
+  'dwg-blocks': async (el) => {
+    const st = ui.panel; const box = el.closest('.fieldset'); const v = (k) => box.querySelector(`[data-k=${k}]`).value;
+    el.disabled = true; el.textContent = 'Reading sheets…';
+    try { const r = await mutate('PUT', `/api/drawings/${st.id}`, { block_type_id: +v('bt'), block_prefix: v('bp'), tr_type_id: v('tt') ? +v('tt') : null });
+      const b = r.blocks; toast(b.pages ? `Read ${b.pages} block sheets: ${b.blocks} new blocks, ${b.linked} pages linked, ${b.transitions} transitions added` : 'No "BLOCK LAYOUT - …" sheet titles found in this file.', { bad: !b.pages }); }
+    catch { /* toast shown */ } finally { el.disabled = false; el.textContent = 'Read block sheets'; }
+  },
   'dwg-del': async (el) => { if (!confirm('Delete this drawing and its links?')) return; await mutate('DELETE', `/api/drawings/${el.dataset.id}`, undefined, { ok: 'Drawing deleted' }); closePanel(); },
   'link-page': (el) => openLinkPage(ui.panel.id, +el.dataset.p),
   'dwg-link-loc': (el) => {
