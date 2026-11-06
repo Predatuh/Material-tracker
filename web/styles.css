@@ -853,3 +853,5 @@ input[type=color] { width: 44px; height: 40px; padding: 2px; border: var(--input
 .skin-box .matrix th.loc .claimed { font-family: "Barlow"; color: var(--bad); }
 .skin-box .mapview .area.claimed { stroke: #1b1b1b; stroke-width: 3.5; stroke-dasharray: none; }
 .skin-box .mapview .mlbl.cl { fill: var(--bad); }
+#toast button { margin-left: 12px; min-height: 32px; padding: 0 12px; border: 0; font-weight: 800; cursor: pointer; background: var(--ink); color: #fff; }
+.skin-meter #toast button { color: var(--lcd); }

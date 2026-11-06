@@ -1549,11 +1549,22 @@ setInterval(async () => {
   if (!local.token || !S || document.hidden) return;
   flushOutbox();
   try { const r = await api('GET', '/api/rev'); S.offline = false;
+    if (r.build && window.__build && r.build !== window.__build) return newVersion();
+    if (r.build) window.__build = r.build;
     const editing = $('#panel form[data-form="tracker"], #panel form[data-form="mat"], #panel form[data-form="person"], #panel form[data-form="type"], #panel form[data-form="txn"] input[name=qty]:focus');
     if (r.rev !== S.rev && !editing && ui.map.poly.length === 0 && !ui.map.draft) await refresh(); else { S.syncedAt = Date.now(); paintSync(); } }
   catch { if (S) { S.offline = true; paintSync(); } }
 }, 15000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden && S) refresh(); });
+// A new version was deployed: reload right away if nothing is half-typed, otherwise offer it.
+let updateShown = false;
+function newVersion() {
+  const busy = !$('#panel').hidden && $('#panel form') || ui.map.poly.length || local.outbox.length;
+  if (!busy) { location.reload(); return; }
+  if (updateShown) return; updateShown = true;
+  const t = $('#toast'); t.innerHTML = '<span>A new version is ready.</span><button>Reload</button>'; t.className = 'show';
+  t.querySelector('button').onclick = () => location.reload();
+}
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 render();
 if (local.token) refresh().then(flushOutbox);

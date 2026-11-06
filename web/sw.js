@@ -1,5 +1,5 @@
 /* Offline shell + last-known job data */
-const CACHE = 'mtrack-v3';
+const CACHE = 'mtrack-v4';
 const SHELL = ['/', '/index.html', '/app.js', '/styles.css', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/fonts/barlow-condensed-latin-600-normal.woff2', '/fonts/barlow-condensed-latin-800-normal.woff2', '/fonts/dseg14.woff2', '/fonts/dseg7.woff2', '/fonts/ibm-plex-sans-condensed-latin-500-normal.woff2', '/fonts/ibm-plex-sans-condensed-latin-600-normal.woff2', '/fonts/marker.woff2', '/fonts/stencil.woff2'];
 
 self.addEventListener('install', (e) => {

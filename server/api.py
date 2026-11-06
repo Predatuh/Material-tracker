@@ -98,7 +98,7 @@ def type_name(type_id, plural=False):
 @bp.get("/status")
 def status():
     users = User.query.filter_by(active=True).order_by(User.name).all()
-    return jsonify({"setup_needed": User.query.count() == 0, "job_name": Setting.get("job_name", ""),
+    return jsonify({"build": current_app.config.get("BUILD"), "setup_needed": User.query.count() == 0, "job_name": Setting.get("job_name", ""),
                     "users": [u.name for u in users],
                     "storage_ephemeral": bool(current_app.config.get("STORAGE_EPHEMERAL")),
                     "secret_missing": bool(current_app.config.get("SECRET_MISSING"))})
@@ -141,7 +141,7 @@ def login():
 @bp.get("/rev")
 @auth()
 def rev():
-    return jsonify({"rev": int(Setting.get("rev", 0) or 0)})
+    return jsonify({"rev": int(Setting.get("rev", 0) or 0), "build": current_app.config.get("BUILD")})
 
 
 @bp.get("/state")

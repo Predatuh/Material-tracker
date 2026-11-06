@@ -76,6 +76,15 @@ def create_app():
         STORAGE_EPHEMERAL=ephemeral,
         SECRET_MISSING=on_cloud and not os.environ.get("SECRET_KEY"),
     )
+    # build id = fingerprint of the web files, so open apps can tell when a new version was deployed
+    import hashlib
+    hsh = hashlib.sha1()
+    for name in ("app.js", "styles.css", "index.html"):
+        try:
+            hsh.update((web / name).read_bytes())
+        except OSError:
+            pass
+    app.config["BUILD"] = hsh.hexdigest()[:10]
     db.init_app(app)
 
     from .api import bp
