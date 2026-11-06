@@ -193,6 +193,7 @@ function scopeLocs(t) {
     return true;
   });
 }
+const claimOf = (t, lid) => ent(t, lid, 0)?.crew || [];
 const statusOf = (t, key) => t.statuses.find((s) => s.key === key) || t.statuses[0];
 const ent = (t, lid, sid = 0) => S.E[`${t.id}:${lid}:${sid}`];
 const entStatus = (t, lid, sid = 0) => statusOf(t, ent(t, lid, sid)?.status);
@@ -524,10 +525,10 @@ function vTrackers() {
   for (const l of locs) { const g = parentType ? l.parent_id || 0 : 0; if (!cur || cur.g !== g) { cur = { g, locs: [] }; groups.push(cur); } cur.locs.push(l); }
   const ncol = cols.length + fcols.length + 1;
   const body = groups.map((gr) => `${gr.g ? `<tr class="grp"><th colspan="${ncol}"><button data-act="${ui.selMode ? 'sel-group' : 'open-loc'}" data-id="${gr.g}" data-ids="${gr.locs.map((l) => l.id).join(',')}">${esc(lfull(S.L[gr.g]))}</button> <small style="color:var(--faint);font-weight:500">${gr.locs.length}</small></th></tr>` : ''}
-    ${gr.locs.map((l) => `<tr><th class="loc"><button data-act="${ui.selMode ? 'sel-row' : 'open-loc'}" data-id="${l.id}" data-t="${t.id}">${esc(l.name)}${l.code && l.code !== l.name ? `<small class="code">${esc(l.code)}</small>` : ''}</button></th>
+    ${gr.locs.map((l) => `<tr><th class="loc"><button data-act="${ui.selMode ? 'sel-row' : 'open-loc'}" data-id="${l.id}" data-t="${t.id}">${esc(l.name)}${l.code && l.code !== l.name ? `<small class="code">${esc(l.code)}</small>` : ''}${t.claims && claimOf(t, l.id).length ? `<small class="claimed">✋ ${esc(claimOf(t, l.id).join(', '))}</small>` : ''}</button></th>
       ${cols.map((c) => cellHtml(t, l, c)).join('')}
       ${fcols.map((c) => { const v = ent(t, l.id, 0)?.values?.[c.field.key]; return `<td><button class="cell val" data-act="open-loc" data-id="${l.id}" data-t="${t.id}">${v === true ? '✓' : esc(v ?? '')}</button></td>`; }).join('')}</tr>`).join('')}`).join('');
-  const selbar = ui.selMode ? `<div class="selbar"><b>${ui.sel.size} selected</b>${t.statuses.map((s) => `<button class="btn sm" data-act="bulk-status" data-s="${esc(s.key)}" ${ui.sel.size ? '' : 'disabled'}>${sw(s.color)}${esc(s.label)}</button>`).join('')}<button class="btn sm ghost" data-act="sel-off">Cancel</button></div>` : '';
+  const selbar = ui.selMode ? `<div class="selbar"><b>${ui.sel.size} selected</b>${t.statuses.map((s) => `<button class="btn sm" data-act="bulk-status" data-s="${esc(s.key)}" ${ui.sel.size ? '' : 'disabled'}>${sw(s.color)}${esc(s.label)}</button>`).join('')}${t.claims ? `<button class="btn sm sun" data-act="bulk-claim" ${ui.sel.size ? '' : 'disabled'}>Claim</button><button class="btn sm" data-act="bulk-unclaim" ${ui.sel.size ? '' : 'disabled'}>Unclaim</button>` : ''}<button class="btn sm ghost" data-act="sel-off">Cancel</button></div>` : '';
   const rf = (k, l) => `<button data-act="tr-filter" data-f="${k}" ${pressed(ui.trFilter === k)}>${l}</button>`;
   return head('Trackers', '', tools) + `<div class="tr-list">${pills}</div>
   <div class="tr-head panel-box"><div><h2>${sw(t.color)}${esc(t.name)}</h2>
@@ -597,7 +598,7 @@ function vMap() {
   </div>${edit}
   <div class="mapview ${mp.editing && ['box', 'poly', 'pin'].includes(mp.tool) ? 'drawing' : ''}" id="mapview"><svg id="mapsvg" xmlns="http://www.w3.org/2000/svg"></svg>
     <div class="map-zoom"><button data-act="zoom" data-z="1.4" aria-label="Zoom in">+</button><button data-act="zoom" data-z="0.7" aria-label="Zoom out">−</button><button data-act="zoom-fit">Fit</button></div>
-    ${legend.length ? `<div class="map-legend">${legend.map((s) => `<span><i class="lg k-${s.k}" style="--c:${esc(s.color)}"></i>${esc(s.label)}</span>`).join('')}</div>` : ''}</div>`;
+    ${legend.length ? `<div class="map-legend">${legend.map((s) => `<span><i class="lg k-${s.k}" style="--c:${esc(s.color)}"></i>${esc(s.label)}</span>`).join('')}${t?.claims ? '<span>✋ Claimed</span>' : ''}</div>` : ''}</div>`;
 }
 function defaultAssignType(m) {
   if (m.location_id) { const lt = S.L[m.location_id]?.type_id; return (S.types.find((ty) => ty.parent_type_id === lt) || S.types[0])?.id; }
@@ -647,10 +648,12 @@ function svgContent() {
       continue;
     }
     const pts = a.points.map((p) => `${(p[0] * W) / 100},${(p[1] * H) / 100}`).join(' ');
-    const cls = !l ? 'unassigned' : !lit ? 'k-todo' : `k-${kindOf(st)}`;
+    const cl = l && t && t.claims && S.inScope[t.id].has(l.id) ? claimOf(t, l.id) : [];
+    const cls = (!l ? 'unassigned' : !lit ? 'k-todo' : `k-${kindOf(st)}`) + (cl.length ? ' claimed' : '');
     shapes.push(`<polygon class="area ${cls} ${mp.picked === a.id ? 'picked' : ''} ${l && S.mapFor[l.id] ? 'hasmap' : ''}" data-area="${a.id}" points="${pts}" style="--c:${esc(st?.color || '#8A98B3')}"/>`);
     if (l) { const c = areaCenter(a, g); const size = clamp(Math.min(c.bw / Math.max(l.name.length * 0.62, 1), c.bh * 0.5), W / 450, W / 45);
-      labels.push(`<text class="mlbl" x="${c.x}" y="${c.y}" font-size="${size}" style="stroke-width:${size * 0.22}px">${esc(l.name)}</text>`); }
+      labels.push(`<text class="mlbl" x="${c.x}" y="${cl.length ? c.y - size * 0.45 : c.y}" font-size="${size}" style="stroke-width:${size * 0.22}px">${esc(l.name)}</text>`);
+      if (cl.length) labels.push(`<text class="mlbl cl" x="${c.x}" y="${c.y + size * 0.6}" font-size="${size * 0.62}" style="stroke-width:${size * 0.18}px">✋ ${esc(cl.join(', '))}</text>`); }
   }
   let draft = '';
   if (mp.draft) { const d = mp.draft; draft = `<rect class="draft" x="${Math.min(d.x0, d.x1)}" y="${Math.min(d.y0, d.y1)}" width="${Math.abs(d.x1 - d.x0)}" height="${Math.abs(d.y1 - d.y0)}"/>`; }
@@ -858,7 +861,7 @@ function locBody(st) {
         <div class="cgroup">${locs.map((x) => { const s = locState(t, x.id); return `<button class="pv big k-${kindOf(s)}" style="--c:${esc(s.color)}" data-act="open-loc" data-id="${x.id}" data-t="${t.id}" title="${esc(x.name)}: ${esc(s.label)}" aria-label="${esc(x.name)}: ${esc(s.label)}"></button>`; }).join('')}</div>
         <div class="row" style="margin-top:8px"><button class="btn sm ghost" data-act="tracker-filter" data-t="${t.id}" data-p="${lid}">Open on check sheet</button></div></div>`; }).join('')}`
     : kids.length ? `<h3>Inside ${esc(l.name)}</h3><div class="chips">${kids.map((k) => `<button class="chip" data-act="open-loc" data-id="${k}">${esc(lname(k))}</button>`).join('')}</div>` : '';
-  const crewHtml = anyClaims ? `<h3>Who's on it</h3><div class="chips">${S.crew.map((n) => `<button class="chip" data-act="loc-crew" data-n="${esc(n)}" ${pressed(st.crew.has(n))}>${esc(n)}</button>`).join('') || '<span class="hint">Add people in Setup.</span>'}</div>
+  const crewHtml = anyClaims ? `<h3>Who's on it <small class="hint" style="margin:0 0 0 auto;font-weight:400">Claims and updates are logged under these names</small></h3><div class="chips">${S.crew.map((n) => `<button class="chip" data-act="loc-crew" data-n="${esc(n)}" ${pressed(st.crew.has(n))}>${esc(n)}</button>`).join('') || '<span class="hint">Add people in Setup.</span>'}</div>
     ${hasMats ? `<label class="check"><input type="checkbox" data-act="loc-book" ${st.book ? 'checked' : ''}> When something is marked done, log its material as installed</label>` : ''}` : '';
   const trHtml = trs.map((t) => trackerControls(t, lid)).join('');
   return `${top}${docHtml}${crewHtml}${trs.length ? `<h3>Progress</h3>${trHtml}` : ''}${childHtml}
@@ -891,7 +894,10 @@ function trackerControls(t, lid) {
       : `<input ${attrs} type="${f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text'}" step="any" value="${esc(v ?? '')}">`;
     return f.type === 'check' ? `<div>${input}</div>` : `<label class="f"><span>${esc(f.label)}</span>${input}</label>`; }).join('')}</div>` : '';
   const docs = S.links.filter((lk) => lk.tracker_id === t.id && (lk.location_id === lid || !lk.location_id)).length;
-  return `<div class="tk"><div class="tk-h">${sw(t.color)}${esc(t.name)}<span class="pc k-${kindOf(s)}" style="--c:${esc(s.color)}">${esc(s.label)}</span></div>${inner}${fields}</div>`;
+  const cl = claimOf(t, lid); const mine = cl.includes(S.me.name);
+  const claim = t.claims ? `<div class="claim ${cl.length ? 'on' : ''}">${cl.length ? `<span class="who-cl">Claimed by <b>${esc(cl.join(', '))}</b></span>` : '<span class="who-cl">Not claimed</span>'}
+      <button class="btn sm ${cl.length && !mine ? '' : 'sun'}" data-act="claim" data-t="${t.id}" data-l="${lid}">${cl.length ? (mine && cl.length === 1 ? 'Unclaim' : 'Claim instead') : 'Claim'}</button></div>` : '';
+  return `<div class="tk"><div class="tk-h">${sw(t.color)}${esc(t.name)}<span class="pc k-${kindOf(s)}" style="--c:${esc(s.color)}">${esc(s.label)}</span></div>${claim}${inner}${fields}</div>`;
 }
 
 // Material panel
@@ -1231,7 +1237,7 @@ function go(v) { ui.view = v; location.hash = v; ui.selMode = false; ui.sel.clea
 async function setEntries(t, locIds, stepIds, body) {
   await mutate('POST', '/api/entries', { tracker_id: t.id, location_ids: locIds, step_ids: stepIds, ...body }, {
     queue: true,
-    optimistic: () => { for (const l of locIds) for (const s of (t.mode === 'steps' ? stepIds : [0])) {
+    optimistic: () => { for (const l of locIds) for (const s of (t.mode === 'steps' && stepIds.length ? stepIds : [0])) {
       const key = `${t.id}:${l}:${s}`; let e = S.E[key];
       if (!e) { e = { t: t.id, l, s, status: t.statuses[0].key, qty: 0, target: null, values: {}, crew: [] }; S.entries.push(e); }
       if (body.status) e.status = body.status; if (body.crew) e.crew = body.crew; if (body.values) e.values = { ...e.values, ...body.values };
@@ -1283,7 +1289,7 @@ const ACT = {
   'sel-group': (el) => { const ids = el.dataset.ids.split(','); const keys = $$('.matrix .cell[data-l]').filter((c) => ids.includes(c.dataset.l)).map((c) => `${c.dataset.l}:${c.dataset.s}`); const all = keys.every((k) => ui.sel.has(k)); keys.forEach((k) => (all ? ui.sel.delete(k) : ui.sel.add(k))); render(); },
   cell: (el) => {
     const k = `${el.dataset.l}:${el.dataset.s}`;
-    if (ui.selMode) { ui.sel.has(k) ? ui.sel.delete(k) : ui.sel.add(k); el.classList.toggle('sel'); const b = $('.selbar b'); if (b) b.textContent = `${ui.sel.size} selected`; $$('.selbar [data-act=bulk-status]').forEach((x) => (x.disabled = !ui.sel.size)); return; }
+    if (ui.selMode) { ui.sel.has(k) ? ui.sel.delete(k) : ui.sel.add(k); el.classList.toggle('sel'); const b = $('.selbar b'); if (b) b.textContent = `${ui.sel.size} selected`; $$('.selbar [data-act^=bulk-]').forEach((x) => (x.disabled = !ui.sel.size)); return; }
     openLoc(+el.dataset.l, { trackerId: ui.trId });
   },
   'bulk-status': async (el) => {
@@ -1321,6 +1327,15 @@ const ACT = {
     const st = ui.panel; const t = S.TR[+el.dataset.t]; const status = el.dataset.k;
     await setEntries(t, [st.lid], [+el.dataset.s], { status, crew: t.claims ? [...st.crew] : undefined, log_materials: statusOf(t, status).done && st.book });
   },
+  claim: async (el) => {
+    const t = S.TR[+el.dataset.t]; const lid = +el.dataset.l; const st = ui.panel;
+    const cl = claimOf(t, lid); const mine = cl.includes(S.me.name) && cl.length === 1;
+    const crew = mine ? [] : (st?.crew?.size ? [...st.crew] : [S.me.name]);
+    await setEntries(t, [lid], [], { crew });
+    toast(crew.length ? `${lname(lid)} claimed by ${crew.join(', ')}` : `${lname(lid)} unclaimed`);
+  },
+  'bulk-claim': async (el) => bulkClaim(el.dataset.act === 'bulk-claim'),
+  'bulk-unclaim': async () => bulkClaim(false),
   'loc-mat': () => pickMaterialAt(ui.panel.lid),
   'pick-mat': (el) => openMaterial(+el.dataset.id, { kind: 'used', location_id: +el.dataset.l }),
   'loc-edit': (el) => openLocEdit(+el.dataset.id),
@@ -1376,6 +1391,12 @@ const ACT = {
   'user-active': async (el) => { await mutate('PUT', `/api/users/${el.dataset.id}`, { active: el.dataset.v === '1' }, { ok: 'Saved' }); closePanel(); },
   'crew-remove': async (el) => { await mutate('PUT', '/api/settings', { crew_names: S.job.crew_names.filter((n) => n !== el.dataset.name) }, { ok: 'Removed' }); closePanel(); },
 };
+async function bulkClaim(on) {
+  const t = S.TR[ui.trId]; const lids = [...new Set([...ui.sel].map((k) => +k.split(':')[0]))];
+  ui.sel.clear(); ui.selMode = false;
+  await setEntries(t, lids, [], { crew: on ? [S.me.name] : [] });
+  toast(`${on ? 'Claimed' : 'Unclaimed'} ${lids.length} ${lids.length === 1 ? 'location' : 'locations'}`);
+}
 function moveStep(st, i, d) { const j = i + d; if (j < 0 || j >= st.steps.length) return; [st.steps[i], st.steps[j]] = [st.steps[j], st.steps[i]]; st.mats.forEach((r) => { if (+r.step_index === i) r.step_index = j; else if (+r.step_index === j) r.step_index = i; }); }
 
 // ── forms ─────────────────────────────────────────────────────────────

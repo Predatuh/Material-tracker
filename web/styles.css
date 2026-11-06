@@ -839,3 +839,17 @@ input[type=color] { width: 44px; height: 40px; padding: 2px; border: var(--input
 .skin-meter .warnbox b { background: var(--ink); color: var(--lcd); padding: 0 4px; }
 .skin-box .warnbox { background: #FFE3DE; border: 2px solid var(--bad); color: #1b1b1b; border-radius: 4px; }
 .skin-box .warnbox b { color: var(--bad); }
+
+/* claims */
+.claim { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; margin: 0 0 10px; }
+.claim .who-cl { font-size: 14px; }
+.matrix th.loc .claimed { display: block; font-size: 11px; font-weight: 700; }
+.skin-meter .claim { border: 1.5px dashed var(--ink); }
+.skin-meter .claim.on { border-style: solid; background: rgba(0, 0, 0, .06); }
+.skin-meter .mapview .area.claimed { stroke-width: 3.5; stroke-dasharray: none; }
+.skin-meter .mapview .mlbl.cl { font-family: "Plex"; font-weight: 600; }
+.skin-box .claim { background: var(--tape); border-radius: 2px; transform: rotate(-.4deg); }
+.skin-box .claim.on .who-cl b { font-family: "Marker"; font-weight: 400; font-size: 17px; color: var(--pen); }
+.skin-box .matrix th.loc .claimed { font-family: "Barlow"; color: var(--bad); }
+.skin-box .mapview .area.claimed { stroke: #1b1b1b; stroke-width: 3.5; stroke-dasharray: none; }
+.skin-box .mapview .mlbl.cl { fill: var(--bad); }

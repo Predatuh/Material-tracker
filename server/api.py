@@ -534,8 +534,9 @@ def set_entries():
     step_ids = [int(x) for x in d.get("step_ids", [])] if t.mode == "steps" else [0]
     valid_steps = {s.id for s in t.steps}
     step_ids = [s for s in step_ids if s == 0 or s in valid_steps] or ([0] if t.mode != "steps" else [])
-    if t.mode == "steps" and not step_ids and status is None and ("values" in d or "note" in d):
-        step_ids = [0]  # tracker-level fields on a location live on step 0
+    claim_only = status is None and d.get("crew") is not None and not any(k in d for k in ("qty", "qty_add", "target", "values"))
+    if t.mode == "steps" and not step_ids and status is None and ("values" in d or "note" in d or claim_only):
+        step_ids = [0]  # claims and tracker-level fields on a location live on step 0
     locs = {l.id: l for l in Location.query.filter(Location.id.in_(loc_ids)).all()} if loc_ids else {}
     if not locs or not step_ids:
         return err("Pick at least one location" + (" and step." if t.mode == "steps" else "."))
@@ -593,7 +594,10 @@ def set_entries():
     # activity line
     names = sorted(locs[l].name for l in locs)
     where = ", ".join(names[:6]) + (f" +{len(names) - 6} more" if len(names) > 6 else "")
-    if t.mode == "steps":
+    if claim_only:
+        who = ", ".join(c for c in d["crew"] if c)
+        log("claim", f"{t.name}: {where} claimed by {who}" if who else f"{t.name}: {where} unclaimed")
+    elif t.mode == "steps":
         what = ", ".join(s.name for s in t.steps if s.id in step_ids)
         label = statuses[status]["label"] if status else "updated"
         log("progress", f"{t.name}: {what} → {label} on {where}")
