@@ -52,15 +52,25 @@ def _add_missing_columns():
 def create_app():
     web = _base_dir() / "web"
     app = Flask(__name__, static_folder=None)
+    vol = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH")
+    if vol and not os.environ.get("MTRACK_DATA_DIR"):
+        os.environ["MTRACK_DATA_DIR"] = vol
     data_dir = _data_dir()
     url = os.environ.get("DATABASE_URL") or f"sqlite:///{data_dir / 'tracker.db'}"
+    # On a cloud host with no database and no volume, the SQLite file is wiped on every restart.
+    on_cloud = any(os.environ.get(k) for k in ("RAILWAY_ENVIRONMENT", "RAILWAY_PROJECT_ID", "RENDER", "DYNO", "FLY_APP_NAME"))
+    ephemeral = on_cloud and not os.environ.get("DATABASE_URL") and not vol
+    if ephemeral:
+        print("WARNING: no DATABASE_URL — data will be lost on restart. Link a Postgres DATABASE_URL to this service.", flush=True)
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
     app.config.update(
         SQLALCHEMY_DATABASE_URI=url,
         SQLALCHEMY_ENGINE_OPTIONS={"pool_pre_ping": True},
         SECRET_KEY=_secret(data_dir),
-        MAX_CONTENT_LENGTH=60 * 1024 * 1024,
+        MAX_CONTENT_LENGTH=80 * 1024 * 1024,
+        STORAGE_EPHEMERAL=ephemeral,
+        SECRET_MISSING=on_cloud and not os.environ.get("SECRET_KEY"),
     )
     db.init_app(app)
 

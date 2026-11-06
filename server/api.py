@@ -99,7 +99,9 @@ def type_name(type_id, plural=False):
 def status():
     users = User.query.filter_by(active=True).order_by(User.name).all()
     return jsonify({"setup_needed": User.query.count() == 0, "job_name": Setting.get("job_name", ""),
-                    "users": [u.name for u in users]})
+                    "users": [u.name for u in users],
+                    "storage_ephemeral": bool(current_app.config.get("STORAGE_EPHEMERAL")),
+                    "secret_missing": bool(current_app.config.get("SECRET_MISSING"))})
 
 
 @bp.post("/setup")

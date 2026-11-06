@@ -1172,14 +1172,16 @@ async function renderGate() {
     catch (e) { app.innerHTML = gateFrame(`<h2>Can't reach the server</h2><p class="hint">${esc(e.message)}</p><button class="btn sun" onclick="location.reload()">Try again</button>`, 'NO SIGNAL'); return; }
   }
   const s = gate.status;
+  const warn = s.storage_ephemeral ? `<div class="warnbox"><b>This server isn't saving anything.</b> No database is connected, so every restart wipes the job and brings you back here. In Railway: open the app service → Variables → New Variable → Add Reference → Postgres → DATABASE_URL. Then set up the job.</div>`
+    : s.secret_missing ? `<div class="warnbox"><b>SECRET_KEY isn't set.</b> Everyone will be signed out whenever the server restarts. Add SECRET_KEY (any long random text) in Railway → Variables.</div>` : '';
   if (s.setup_needed) {
-    app.innerHTML = gateFrame(`<h2>Set up the job</h2><p class="hint">You'll be the foreman. Power blocks, rows and transitions are ready as location types. Change them anytime.</p>
+    app.innerHTML = gateFrame(`${warn}<h2>Set up the job</h2><p class="hint">You'll be the foreman. Power blocks, rows and transitions are ready as location types. Change them anytime.</p>
       <form data-form="setup"><label class="f"><span>Job name</span><input name="job_name" placeholder="Sunflower Solar, Phase 2" required autofocus></label>
         <label class="f"><span>Your name</span><input name="name" required></label><label class="f"><span>Your PIN, 4 to 8 digits</span><input name="pin" inputmode="numeric" pattern="\\d{4,8}" required autocomplete="new-password"></label>
         <p class="err">${esc(gate.err)}</p><button class="btn sun" style="width:100%">Start tracking</button></form>`, 'SETUP');
     return;
   }
-  const inner = !gate.name
+  const inner = warn + (!gate.name
     ? `<h2>${isMeter() ? 'Who is this?' : 'Grab your hard hat'}</h2><div class="${isMeter() ? 'chips' : 'hats pick'}">${s.users.map((n) => isMeter()
         ? `<button class="chip big" data-act="gate-name" data-n="${esc(n)}">${esc(n)}</button>`
         : `<button class="hat" data-act="gate-name" data-n="${esc(n)}">${HAT(hatColor(n))}<span class="hand">${esc(n)}</span></button>`).join('')}</div>`
@@ -1187,7 +1189,7 @@ async function renderGate() {
       <div class="pin-read">${isMeter() ? `<span class="num ghost">8888</span><span class="num">${'8'.repeat(gate.pin.length).replace(/8/g, '-') || ''}</span>` : Array.from({ length: Math.max(4, gate.pin.length) }, (_, i) => `<i class="${i < gate.pin.length ? 'on' : ''}"></i>`).join('')}</div>
       <p class="err">${esc(gate.err)}</p>
       <div class="keypad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button data-act="pin" data-n="${n}">${n}</button>`).join('')}<button data-act="pin-back" aria-label="Delete">⌫</button><button data-act="pin" data-n="0">0</button><button class="go" data-act="pin-go">GO</button></div>
-      <div class="row" style="margin-top:12px"><button class="btn ghost" data-act="gate-name" data-n="">Not ${esc(gate.name)}?</button></div>`;
+      <div class="row" style="margin-top:12px"><button class="btn ghost" data-act="gate-name" data-n="">Not ${esc(gate.name)}?</button></div>`);
   app.innerHTML = gateFrame(inner, gate.name ? 'ENTER PIN' : 'SIGN IN');
 }
 async function tryLogin() {

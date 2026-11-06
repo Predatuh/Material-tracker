@@ -834,3 +834,8 @@ input[type=color] { width: 44px; height: 40px; padding: 2px; border: var(--input
 .skin-box #toast.bad { color: var(--bad); }
 
 .matrix th.loc .code { display: block; font-size: 11px; opacity: .65; font-family: inherit; }
+.warnbox { padding: 10px 12px; margin: 0 0 14px; font-size: 14px; line-height: 1.4; }
+.skin-meter .warnbox { border: 2px solid var(--ink); animation: none; }
+.skin-meter .warnbox b { background: var(--ink); color: var(--lcd); padding: 0 4px; }
+.skin-box .warnbox { background: #FFE3DE; border: 2px solid var(--bad); color: #1b1b1b; border-radius: 4px; }
+.skin-box .warnbox b { color: var(--bad); }
