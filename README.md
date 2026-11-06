@@ -2,6 +2,12 @@
 
 Tracks materials, crew progress and drawings for a solar electrical job. It runs as a website, an installable phone app (home-screen PWA that keeps working with no signal), and a Windows .exe.
 
+## Two looks, same app
+Each person picks a look on their own device. Use **Setup → Look on this device**, the **MODE** key on the meter, or **Meter view** on the job box lid. Both show the same data and do the same things.
+
+- **Meter**: a rugged handheld meter. Yellow holster, LCD screen with 7-segment numbers and bar graphs, and a rotary dial to switch screens. **LOG** opens a quick material log, **SYNC** syncs now, and **☼** turns on a blue-green LCD backlight for low light. Status is shown as LCD marks: outline = to do, hatched = working, solid = done, blinking = problem.
+- **Job box**: diamond-plate lid with stenciled tabs. Materials sit in shelf bins with masking-tape labels written in Sharpie, plus stickers for short, low or out. Progress is a clipboard tally board, the crew show as hard hats, and prints are taped up. Status is pen marks plus highlighter in each tracker's own status colors (✓ done, / working, ✗ problem). The padlock shows sync: closed = synced, open = changes waiting.
+
 ## How it's organized
 
 **Location types** are the things work is tracked against. You define them yourself. New jobs start with:

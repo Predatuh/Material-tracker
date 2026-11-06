@@ -3,8 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#070B14">
-<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#E8B92B">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Tracker">
@@ -12,11 +11,12 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/icons/icon-192.png">
 <link rel="apple-touch-icon" href="/icons/icon-192.png">
-<link rel="preload" href="/fonts/chakra-petch-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="preload" href="/fonts/archivo.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/dseg7.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/barlow-condensed-latin-800-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/styles.css">
 </head>
-<body>
+<body class="skin-meter">
+<script>try{var k=localStorage.getItem("mt.skin");document.body.className="skin-"+(k==="box"?"box":"meter")+(k!=="box"&&localStorage.getItem("mt.bl")==="1"?" backlight":"")}catch(e){}</script>
 <div id="app"></div>
 <div id="scrim" hidden></div>
 <section id="panel" role="dialog" aria-modal="true" hidden></section>

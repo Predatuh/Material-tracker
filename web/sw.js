@@ -1,6 +1,6 @@
 /* Offline shell + last-known job data */
-const CACHE = 'mtrack-v2';
-const SHELL = ['/', '/index.html', '/app.js', '/styles.css', '/fonts/archivo.woff2', '/fonts/chakra-petch-latin-500-normal.woff2', '/fonts/chakra-petch-latin-600-normal.woff2', '/fonts/chakra-petch-latin-700-normal.woff2', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
+const CACHE = 'mtrack-v3';
+const SHELL = ['/', '/index.html', '/app.js', '/styles.css', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/fonts/barlow-condensed-latin-600-normal.woff2', '/fonts/barlow-condensed-latin-800-normal.woff2', '/fonts/dseg14.woff2', '/fonts/dseg7.woff2', '/fonts/ibm-plex-sans-condensed-latin-500-normal.woff2', '/fonts/ibm-plex-sans-condensed-latin-600-normal.woff2', '/fonts/marker.woff2', '/fonts/stencil.woff2'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

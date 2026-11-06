@@ -278,97 +278,145 @@ function docChip(lk, idx, group) {
 }
 const docGroups = {}; // stash lists so chips can open the viewer with siblings as tabs
 
+// ── skins ─────────────────────────────────────────────────────────────
+// Two looks over the same app: "meter" (handheld meter, LCD, dial) and "box" (job box, tape, Sharpie).
+const SKINS = { meter: 'Meter', box: 'Job box' };
+ui.skin = SKINS[localStorage.getItem('mt.skin')] ? localStorage.getItem('mt.skin') : 'meter';
+ui.backlight = localStorage.getItem('mt.bl') === '1';
+const isMeter = () => ui.skin === 'meter';
+function applySkin() {
+  document.body.className = `skin-${ui.skin}${ui.backlight && isMeter() ? ' backlight' : ''}`;
+  const m = document.querySelector('meta[name=theme-color]'); if (m) m.content = isMeter() ? '#E8B92B' : '#3B4650';
+}
+function setSkin(s) { ui.skin = s; localStorage.setItem('mt.skin', s); applySkin(); render(); if (ui.panel?.live) ui.panel.live(); else if (ui.panel) closePanel(); }
+// numbers: 7-segment on the meter (no thousands commas), Sharpie in the box
+const N = (v, d = 2) => { const r = Math.round((+v || 0) * 10 ** d) / 10 ** d; return `<span class="num">${isMeter() ? String(r) : r.toLocaleString(undefined, { maximumFractionDigits: d })}</span>`; };
+function kindOf(s) { if (!s) return 'none'; if (s.problem) return 'prob'; if (s.done) return 'done'; if (s.started || s.partial) return 'work'; return 'todo'; }
+const kindOfStatus = (t, s) => s.problem ? 'prob' : s.done ? 'done' : s.key === t.statuses[0].key ? 'todo' : 'work';
+const cellMark = (k) => `<span class="mark k-${k}"></span>`;
+function bargraph(pct, n = 40, cls = '') {
+  const on = Math.round(clamp(pct, 0, 100) / 100 * n);
+  return `<div class="bars ${cls}" role="img" aria-label="${Math.round(pct)}%">${Array.from({ length: n }, (_, i) => `<i class="${i < on ? 'on' : ''}"></i>`).join('')}</div>`;
+}
+function tally(n) {
+  let out = ''; let left = n;
+  while (left > 0) { const k = Math.min(5, left); let s = '<svg viewBox="0 0 48 24" class="tal" aria-hidden="true">';
+    for (let i = 0; i < Math.min(k, 4); i++) s += `<path d="M${7 + i * 10} 3 L${6 + i * 10 + (i % 2)} 21"/>`;
+    if (k === 5) s += '<path d="M2 18 L45 6"/>';
+    out += s + '</svg>'; left -= 5; }
+  return `<span class="tally" aria-label="${n}">${out}</span>`;
+}
+const HAT = (c) => `<svg viewBox="0 0 74 50" class="hat-svg" aria-hidden="true"><path d="M6 40 Q8 8 37 6 Q66 8 68 40 Z" fill="${c}"/><rect x="0" y="38" width="74" height="8" rx="4" fill="${c}" style="filter:brightness(.85)"/><rect x="33" y="6" width="8" height="34" fill="${c}" style="filter:brightness(.93)"/></svg>`;
+const HAT_COLORS = ['#FFD21F', '#F4F4F0', '#2E7DD7', '#F26B1D', '#2E9B4E', '#D7261E', '#8A5CF6'];
+const hatColor = (name) => { const u = S?.users.find((x) => x.name === name); if (u?.role === 'foreman') return '#F4F4F0'; let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0; return HAT_COLORS[h % HAT_COLORS.length]; };
+
 // ── shell ─────────────────────────────────────────────────────────────
 function render() {
+  applySkin();
   const app = $('#app');
   if (!local.token) return renderGate();
-  if (!S) { app.innerHTML = `<div class="gate"><div class="gate-card mod">${LOGO}<h1>Loading job…</h1><p class="sub">Pulling the latest from the server.</p></div></div>`; return; }
-  const keep = { x: $('.matrix-wrap')?.scrollLeft, y: $('.matrix-wrap')?.scrollTop };
+  if (!S) { app.innerHTML = isMeter() ? `<div class="gate"><div class="g-dev"><div class="lcd g-lcd"><div class="d14">LOADING</div><p>Pulling the latest from the server.</p></div></div></div>` : `<div class="gate"><div class="g-box"><h1 class="spray">Loading job…</h1></div></div>`; return; }
+  const keep = { x: $('.matrix-wrap')?.scrollLeft, y: $('.matrix-wrap')?.scrollTop, s: $('#lcd')?.scrollTop };
   const view = { overview: vOverview, materials: vMaterials, trackers: vTrackers, map: vMap, drawings: vDrawings, setup: vSetup }[ui.view] || vOverview;
-  const tabs = VIEWS.map((v) => `<button class="tab" data-act="go" data-v="${v.id}" ${ui.view === v.id ? 'aria-current="page"' : ''}>${svgI(v.id)}<span>${v.name}</span></button>`).join('');
-  app.innerHTML = `<header class="topbar"><div class="brand">${LOGO}<b>${esc(S.job.name || 'Material Tracker')}</b></div>
-      <nav class="tabs" aria-label="Main">${tabs}</nav>
-      <div class="who"><span class="sync" id="sync">${syncText()}</span><button class="me" data-act="go" data-v="setup">${esc(S.me.name)}</button></div></header>
-    <main class="view">${view()}</main><nav class="dock" aria-label="Main">${tabs}</nav>`;
+  app.innerHTML = isMeter() ? shellMeter(view()) : shellBox(view());
   if (ui.view === 'map') mountMap();
   if (ui.view === 'materials') paintBom();
   const mw = $('.matrix-wrap'); if (mw && keep.x != null) { mw.scrollLeft = keep.x; mw.scrollTop = keep.y; }
+  if (keep.s != null && $('#lcd')) $('#lcd').scrollTop = keep.s;
   document.title = `${VIEWS.find((v) => v.id === ui.view).name} · ${S.job.name || 'Material Tracker'}`;
+}
+const DIAL_LABEL = { overview: 'OVERVIEW', materials: 'MATERIAL', trackers: 'TRACK', map: 'MAP', drawings: 'PRINTS', setup: 'SETUP' };
+function shellMeter(content) {
+  const idx = VIEWS.findIndex((v) => v.id === ui.view);
+  const ang = (i) => -135 + i * 54;
+  const probs = S.trackers.reduce((a, t) => a + (t.status !== 'done' ? progress(t).problems : 0), 0);
+  const orders = S.materials.filter((m) => matInfo(m).order > 0).length;
+  const n = local.outbox.length; const off = S.offline || !navigator.onLine;
+  return `<div class="device"><div class="holster"><span class="brand">FIELD · MT-2</span><div class="case">
+    <div class="bezel"><div class="lcd" id="lcd">
+      <div class="annun"><span class="on">${esc((S.job.name || 'JOB').toUpperCase())}</span><span class="on">${DIAL_LABEL[ui.view]}</span>
+        <span class="${probs ? 'on blink' : ''}">PROB ${probs}</span><span class="${orders ? 'on' : ''}">ORDER ${orders}</span>
+        <span class="r ${n || off ? 'on' : ''}" id="sync">${syncText()}</span><span class="on">${esc(S.me.name.toUpperCase())}</span></div>
+      <main class="view">${content}</main></div></div>
+    <div class="deck">
+      <div class="keys"><button class="key y" data-act="quick-log">LOG<small>material</small></button><button class="key" data-act="sync-now">SYNC</button>
+        <button class="key" data-act="backlight" ${pressed(ui.backlight)}>☼<small>light</small></button><button class="key" data-act="skin" data-v="box">MODE<small>job box</small></button></div>
+      <div class="dial" role="tablist" aria-label="Screens">
+        ${VIEWS.map((v, i) => { const a = ang(i) * Math.PI / 180; return `<button class="dl ${i === idx ? 'on' : ''}" role="tab" aria-selected="${i === idx}" data-act="go" data-v="${v.id}" style="--x:${(50 + Math.sin(a) * 46).toFixed(1)}%;--y:${(50 - Math.cos(a) * 46).toFixed(1)}%">${DIAL_LABEL[v.id]}</button>`; }).join('')}
+        <div class="knob" aria-hidden="true"><i class="ptr" style="--a:${ang(idx)}deg"></i></div></div>
+      <div class="jacks" aria-hidden="true"><i></i><i></i><i class="r"></i></div>
+    </div></div></div></div>`;
+}
+function shellBox(content) {
+  const n = local.outbox.length; const off = S.offline || !navigator.onLine;
+  return `<header class="lid"><h1 class="stencil">${esc(S.job.name || 'Material Tracker')}</h1>
+      <div class="lid-r"><span class="padlock ${n ? 'open' : off ? 'off' : ''}" id="sync" title="Sync">${syncText()}</span>
+        <button class="lid-btn" data-act="skin" data-v="meter">Meter view</button><button class="lid-btn me" data-act="go" data-v="setup">${esc(S.me.name)}</button></div></header>
+    <nav class="tabs" aria-label="Main">${VIEWS.map((v) => `<button class="tab" data-act="go" data-v="${v.id}" ${ui.view === v.id ? 'aria-current="page"' : ''}>${v.id === 'drawings' ? 'Prints' : v.name}</button>`).join('')}</nav>
+    <main class="view">${content}</main>`;
 }
 function syncText() {
   const n = local.outbox.length;
-  if (n) return `<span class="led pending"></span>${n} waiting`;
-  if (S?.offline || !navigator.onLine) return `<span class="led off"></span>Offline`;
-  return `<span class="led"></span>${S?.syncedAt ? new Date(S.syncedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—'}`;
+  if (n) return `${n} waiting`;
+  if (S?.offline || !navigator.onLine) return 'Offline';
+  return `Synced ${S?.syncedAt ? new Date(S.syncedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''}`;
 }
-function paintSync() { const el = $('#sync'); if (el) el.innerHTML = syncText(); }
+function paintSync() { const el = $('#sync'); if (!el) return; el.innerHTML = syncText(); const n = local.outbox.length, off = S?.offline || !navigator.onLine;
+  if (isMeter()) el.classList.toggle('on', !!(n || off)); else { el.classList.toggle('open', !!n); el.classList.toggle('off', !n && off); } }
 const head = (title, sub = '', tools = '') => `<div class="head"><div><h1>${title}</h1>${sub ? `<p>${sub}</p>` : ''}</div>${tools ? `<div class="tools">${tools}</div>` : ''}</div>`;
-const emptyBox = (title, text, actions = '') => `<div class="empty mod"><b>${title}</b><p>${text}</p>${actions ? `<div class="row">${actions}</div>` : ''}</div>`;
+const emptyBox = (title, text, actions = '') => `<div class="empty panel-box"><b>${title}</b><p>${text}</p>${actions ? `<div class="row">${actions}</div>` : ''}</div>`;
 
 // ── Overview ──────────────────────────────────────────────────────────
-function vOverview() {
+function overviewData() {
   const active = S.trackers.filter((t) => t.status !== 'done');
-  let wsum = 0, psum = 0, problems = 0;
-  const prog = {};
+  let wsum = 0, psum = 0, problems = 0; const prog = {};
   for (const t of active) { const p = progress(t); prog[t.id] = p; wsum += p.total; psum += p.exact * p.total; problems += p.problems; }
-  const overall = wsum ? psum / wsum : 0;
   const orders = S.materials.map((m) => ({ m, i: matInfo(m) })).filter((x) => x.i.order > 0).sort((a, b) => (b.i.short > 0) - (a.i.short > 0));
-  const outN = Object.keys(S.out_by_person).length;
-  const today = new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
-
-  const arrays = active.length ? active.map((t) => {
-    const p = prog[t.id]; const ty = S.TY[t.type_id];
-    const groups = {};
-    for (const l of S.scope[t.id]) { const g = l.parent_id && ty?.parent_type_id ? l.parent_id : 0; (groups[g] ||= []).push(l); }
-    const cells = Object.entries(groups).map(([g, locs]) => `<div class="cgroup">${+g ? `<span class="gl">${esc(lname(+g))}</span>` : ''}${locs.map((l) => {
-      const s = locState(t, l.id); return `<button class="pv ${locs.length < 40 ? 'big' : ''}" style="background:${s.started || s.done ? s.color : ''}" data-act="open-loc" data-id="${l.id}" data-t="${t.id}" title="${esc(l.name)}: ${esc(s.label)}" aria-label="${esc(l.name)}: ${esc(s.label)}"></button>`; }).join('')}</div>`).join('');
-    return `<div class="array-t" data-act="open-tracker" data-id="${t.id}">
-      <div class="array-head"><span class="stripe" style="background:${esc(t.color)}"></span>
-        <div><div class="nm">${esc(t.name)}</div><div class="meta">${p.doneLocs} of ${p.total} ${esc((ty?.plural || '').toLowerCase())} done${t.due_date ? `, due ${due(t.due_date)}` : ''}${p.problems ? `, <span style="color:var(--arc)">${p.problems} problem${p.problems > 1 ? 's' : ''}</span>` : ''}${t.status === 'hold' ? ', on hold' : ''}</div></div>
-        <div class="pc">${p.pct}%</div></div>
-      <div class="cells">${cells || '<span class="hint">Nothing in scope yet.</span>'}</div></div>`;
-  }).join('') : emptyBox('No trackers yet', 'A tracker is anything you need to follow across the site: string wiring by row, transitions, PB terminations, cable footage. Pick a starting point and adjust it.', S.manage ? '<button class="btn sun" data-act="tracker-edit">Create a tracker</button>' : '');
-
-  const orderHtml = orders.length ? orders.slice(0, 10).map(({ m, i }) => `<div class="order-row" data-act="open-mat" data-id="${m.id}">
-      <div><b>${esc(m.name)}</b></div><div class="q">${q(i.order)} ${esc(m.unit)}</div>
-      <div class="sub">${i.short > 0 ? `Short ${q(i.short)} for remaining work` : `Below reorder point of ${q(m.reorder_point)}`}. ${q(m.on_hand)} on hand${m.on_order ? `, ${q(m.on_order)} on order` : ''}.</div></div>`).join('')
-    : `<p class="hint">Nothing to order. Stock covers the remaining work.</p>`;
-  const outHtml = outN ? Object.entries(S.out_by_person).map(([p, mats]) => `<div class="person"><div class="nm">${esc(p)}</div><div></div><div class="has chips">${Object.entries(mats).map(([mid, n]) => S.M[mid] ? `<button class="chip" data-act="open-mat" data-id="${mid}">${q(n)} ${esc(S.M[mid].unit)} <small>${esc(S.M[mid].name)}</small></button>` : '').join('')}</div></div>`).join('')
-    : `<p class="hint">Nobody has material checked out.</p>`;
-
-  return `${head(esc(S.job.name || 'Overview'), today, `${installEvt ? '<button class="btn sm" data-act="install">Install app</button>' : ''}${S.manage ? '<button class="btn sm sun" data-act="tracker-edit">New tracker</button>' : ''}`)}
-  <section class="hero mod">${sunPath(overall)}
-    <div class="stats">
-      <div class="stat"><div class="v">${active.length}</div><div class="k">Active trackers</div></div>
-      <div class="stat live"><div class="v">${S.locations.length}</div><div class="k">Locations on site</div></div>
-      <div class="stat ${problems ? 'arc' : ''}"><div class="v">${problems}</div><div class="k">Open problems</div></div>
-      <div class="stat ${orders.length ? 'sun' : ''}"><div class="v">${orders.length}</div><div class="k">Items to order</div></div>
-      <div class="stat"><div class="v">${outN}</div><div class="k">People with material out</div></div>
-      <div class="stat"><div class="v">${S.drawings.length}</div><div class="k">Drawings on file</div></div>
-    </div></section>
-  <div class="ov"><div>
-      <section class="panel-box mod"><h2 class="sec-h">The array <small>One cell per location. Tap one to update it.</small></h2>${arrays}</section>
-      <section class="panel-box mod"><h2 class="sec-h">Out with the crew</h2>${outHtml}</section>
-    </div><div>
-      <section class="panel-box mod"><h2 class="sec-h">Order list ${orders.length ? `<a class="btn sm" href="/api/export/order.csv?t=${tok()}">Download</a>` : ''}</h2>${orderHtml}</section>
-      <section class="panel-box mod"><h2 class="sec-h">Daily log</h2>${logList(S.activity.slice(0, 40))}</section>
-    </div></div>`;
+  return { active, prog, overall: wsum ? psum / wsum : 0, problems, orders };
 }
-function sunPath(pct) {
-  const p = clamp(pct / 100, 0, 1), cx = 200, cy = 196, r = 168;
-  const x = cx - r * Math.cos(Math.PI * p), y = cy - r * Math.sin(Math.PI * p);
-  return `<svg class="sunpath" viewBox="0 0 400 230" role="img" aria-label="${Math.round(pct)}% of tracked work done">
-    <defs><linearGradient id="sunGrad" x1="0" x2="1"><stop offset="0" stop-color="#FF7A2F"/><stop offset=".6" stop-color="#FFB224"/><stop offset="1" stop-color="#FFE08A"/></linearGradient>
-      <radialGradient id="sunGlow"><stop offset="0" stop-color="#FFE08A"/><stop offset=".35" stop-color="#FFB224"/><stop offset="1" stop-color="#FFB224" stop-opacity="0"/></radialGradient></defs>
-    <path class="arc-bg" d="M${cx - r} ${cy} A${r} ${r} 0 0 1 ${cx + r} ${cy}"/>
-    ${p > 0.002 ? `<path class="arc-fg" d="M${cx - r} ${cy} A${r} ${r} 0 0 1 ${x.toFixed(1)} ${y.toFixed(1)}"/>` : ''}
-    <line class="horizon" x1="10" y1="${cy}" x2="390" y2="${cy}"/>
-    <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="34" fill="url(#sunGlow)" opacity=".55"/>
-    <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="10" fill="#FFD27A"/>
-    <text class="pct" x="${cx}" y="${cy - 52}">${Math.round(pct)}%</text>
-    <text class="cap" x="${cx}" y="${cy - 22}">of tracked work done</text>
-    <text class="cap" x="${cx - r}" y="${cy + 22}" style="font-size:11px">Start</text><text class="cap" x="${cx + r}" y="${cy + 22}" style="font-size:11px">Energized</text>
-  </svg>`;
+function arrayCells(t) {
+  const ty = S.TY[t.type_id]; const groups = {};
+  for (const l of S.scope[t.id]) { const g = l.parent_id && ty?.parent_type_id ? l.parent_id : 0; (groups[g] ||= []).push(l); }
+  return Object.entries(groups).map(([g, locs]) => `<div class="cgroup">${+g ? `<span class="gl">${esc(lname(+g))}</span>` : ''}${locs.map((l) => {
+    const s = locState(t, l.id); const k = kindOf(s);
+    return `<button class="pv k-${k}" style="--c:${esc(s.color)}" data-act="open-loc" data-id="${l.id}" data-t="${t.id}" title="${esc(l.name)}: ${esc(s.label)}" aria-label="${esc(l.name)}: ${esc(s.label)}"></button>`; }).join('')}</div>`).join('');
+}
+function vOverview() {
+  const d = overviewData();
+  const today = new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
+  const noTr = emptyBox('No trackers yet', 'A tracker follows one kind of work across the site: string wiring by row, transitions, PB terminations, cable footage. Pick a starting point and change anything.', S.manage ? '<button class="btn sun" data-act="tracker-edit">Create a tracker</button>' : '');
+  const outE = Object.entries(S.out_by_person);
+  const orderRows = d.orders.slice(0, 10).map(({ m, i }) => `<button class="order-row" data-act="open-mat" data-id="${m.id}"><span class="nm">${esc(m.name)}</span><span class="q">${N(i.order)} ${esc(m.unit)}</span>
+      <span class="sub">${i.short > 0 ? `short ${q(i.short)} for remaining work` : `below reorder point (${q(m.reorder_point)})`} · ${q(m.on_hand)} on hand${m.on_order ? `, ${q(m.on_order)} coming` : ''}</span></button>`).join('');
+  const tools = `${installEvt ? '<button class="btn sm" data-act="install">Install app</button>' : ''}${S.manage ? '<button class="btn sm sun" data-act="tracker-edit">New tracker</button>' : ''}`;
+  if (isMeter()) {
+    return `<div class="readout">
+        <div class="ro-top"><div class="ro-big">${N(d.overall, 1)}<span class="unit">% DONE</span></div>
+          <div class="ro-side"><div class="d14">${new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }).replace(/,/g, '').toUpperCase()}</div><div class="ro-tools">${tools}</div></div></div>
+        ${bargraph(d.overall, 50, 'big')}<div class="scale"><span>0</span><span>25</span><span>50</span><span>75</span><span>100</span></div>
+        <div class="annun2"><span class="${d.problems ? 'on' : ''}">PROBLEMS ${N(d.problems, 0)}</span><span class="${d.orders.length ? 'on' : ''}">TO ORDER ${N(d.orders.length, 0)}</span><span class="${outE.length ? 'on' : ''}">CREW OUT ${N(outE.length, 0)}</span><span>PRINTS ${N(S.drawings.length, 0)}</span></div></div>
+      <div class="ov">
+        <section class="panel-box"><h2 class="sec-h">Trackers</h2>${d.active.length ? d.active.map((t) => { const p = d.prog[t.id]; return `<div class="ro-tr" data-act="open-tracker" data-id="${t.id}">
+          <div class="ro-tr-h"><span class="nm">${sw(t.color)}${esc(t.name)}</span>${bargraph(p.pct, 24)}<span class="pc">${N(p.pct, 0)}%</span></div>
+          <div class="meta">${p.doneLocs}/${p.total} ${esc((S.TY[t.type_id]?.plural || '').toLowerCase())} done${p.problems ? ` · <b class="blink">${p.problems} PROB</b>` : ''}${t.due_date ? ` · due ${due(t.due_date)}` : ''}</div>
+          <div class="cells">${arrayCells(t)}</div></div>`; }).join('') : noTr}</section>
+        <div><section class="panel-box"><h2 class="sec-h">To order ${d.orders.length ? `<a class="btn sm" href="/api/export/order.csv?t=${tok()}">CSV</a>` : ''}</h2>${orderRows || '<p class="hint">Nothing to order.</p>'}</section>
+          <section class="panel-box"><h2 class="sec-h">Out with crew</h2>${outE.length ? outE.map(([p, mats]) => `<div class="ro-out"><b>${esc(p)}</b>${Object.entries(mats).map(([mid, n]) => S.M[mid] ? `<button class="chip" data-act="open-mat" data-id="${mid}">${N(n)} ${esc(S.M[mid].unit)} <small>${esc(S.M[mid].name)}</small></button>` : '').join('')}</div>`).join('') : '<p class="hint">Nothing checked out.</p>'}</section>
+          <section class="panel-box"><h2 class="sec-h">Log</h2>${logList(S.activity.slice(0, 30))}</section></div></div>`;
+  }
+  // job box
+  return `${head('Today on site', today, tools)}
+    <div class="ov">
+      <div><h2 class="spray">Tally board</h2><div class="clip"><div class="paper">
+        ${d.active.length ? d.active.map((t) => { const p = d.prog[t.id]; const ty = S.TY[t.type_id];
+          return `<div class="tb-tr" data-act="open-tracker" data-id="${t.id}"><div class="tb-h"><span class="hand">${esc(t.name)}</span><span class="tb-pc hand">${p.pct}%</span></div>
+            <div class="tb-sub">${p.total <= 60 ? tally(p.doneLocs) : `<span class="hl" style="--w:${p.pct}%;--c:${esc(t.color)}"></span>`} <span class="hand small">${p.doneLocs}/${p.total} ${esc((ty?.plural || '').toLowerCase())}${p.problems ? ` · <b class="red">${p.problems} problem${p.problems > 1 ? 's' : ''}</b>` : ''}</span></div>
+            <div class="cells">${arrayCells(t)}</div></div>`; }).join('') : noTr}
+      </div></div></div>
+      <div><h2 class="spray o">To order</h2>${d.orders.length ? `<div class="tapes">${orderRows}</div><a class="btn sm" href="/api/export/order.csv?t=${tok()}" style="margin-top:10px">Download order list</a>` : '<p class="hint on-steel">Nothing to order. Stock covers the work left.</p>'}
+        <h2 class="spray">Who's got what</h2><div class="hats">${outE.length ? outE.map(([p, mats]) => `<div class="hat">${HAT(hatColor(p))}<span class="hand">${esc(p)}</span>${Object.entries(mats).map(([mid, n]) => S.M[mid] ? `<button class="hat-l" data-act="open-mat" data-id="${mid}">${q(n)} ${esc(S.M[mid].unit)} ${esc(S.M[mid].name)}</button>` : '').join('')}</div>`).join('') : '<p class="hint on-steel">Nobody has material out.</p>'}</div>
+        <h2 class="spray">Daily log</h2><div class="clip"><div class="paper">${logList(S.activity.slice(0, 25))}</div></div></div>
+    </div>`;
 }
 function logList(items) {
   if (!items.length) return `<p class="hint">Nothing logged yet.</p>`;
@@ -380,40 +428,52 @@ function logList(items) {
 // ── Materials ─────────────────────────────────────────────────────────
 function vMaterials() {
   const tools = `${S.manage ? '<button class="btn sm sun" data-act="mat-edit">Add material</button><button class="btn sm" data-act="mat-import">Import CSV</button>' : ''}<a class="btn sm" href="/api/export/materials.csv?t=${tok()}">Export</a>`;
-  if (!S.materials.length) return head('Materials', '', tools) + emptyBox('No materials yet', "Add what's in the conex and laydown yard, or paste a CSV from your takeoff to add everything at once.", S.manage ? '<button class="btn sun" data-act="mat-edit">Add material</button><button class="btn" data-act="mat-import">Import CSV</button>' : '');
+  if (!S.materials.length) return head('Materials', '', tools) + emptyBox('No materials yet', "Add what's in the conex and laydown yard, or paste a CSV from your takeoff.", S.manage ? '<button class="btn sun" data-act="mat-edit">Add material</button><button class="btn" data-act="mat-import">Import CSV</button>' : '');
   const c = { all: S.materials.length, short: 0, low: 0, out: 0 };
   for (const m of S.materials) { const i = matInfo(m); if (i.short > 0) c.short++; if (i.low) c.low++; if (m.out_qty > 0) c.out++; }
   const f = (k, l) => `<button data-act="mat-filter" data-f="${k}" ${pressed(ui.matFilter === k)}>${l}<span class="ct">${c[k]}</span></button>`;
-  return head('Materials', `${q(Object.values(S.need).reduce((a, b) => a + (b > 0 ? 1 : 0), 0))} items needed by remaining work`, tools) + `
-  <div class="toolbar"><input type="search" id="mat-search" placeholder="Search material or part number" value="${esc(ui.matSearch)}" aria-label="Search materials">
-    <div class="seg" role="group" aria-label="Filter">${f('all', 'All')}${f('short', 'Short')}${f('low', 'Low')}${f('out', 'Out')}</div></div>
-  <div class="tbl-wrap mod"><table class="bom"><thead><tr><th class="l">Material</th><th class="l gcol">Stock against need</th><th>On hand</th><th>Out</th><th>On order</th><th>Still need</th><th>Short</th></tr></thead><tbody id="bom"></tbody></table></div>
-  <div class="legend"><span><i style="background:linear-gradient(90deg,#2E7BA8,var(--sky))"></i>On hand</span><span><i style="background:repeating-linear-gradient(135deg,var(--sky) 0 2px,transparent 2px 5px)"></i>Out with crew</span><span><i style="border:1px dashed var(--dim)"></i>On order</span><span><i style="background:repeating-linear-gradient(135deg,var(--arc) 0 3px,rgba(255,93,74,.25) 3px 6px)"></i>Short</span><span><i style="width:2px;background:var(--sun)"></i>Still needed</span></div>`;
+  const bar = `<div class="toolbar"><input type="search" id="mat-search" placeholder="Search material or part number" value="${esc(ui.matSearch)}" aria-label="Search materials">
+    <div class="seg" role="group" aria-label="Filter">${f('all', 'All')}${f('short', 'Short')}${f('low', 'Low')}${f('out', 'Out')}</div></div>`;
+  if (isMeter()) return head('Materials', '', tools) + bar + `<div class="panel-box tbl-wrap"><table class="bom"><thead><tr><th class="l">Material</th><th class="l gcol">Stock vs need</th><th>On hand</th><th>Out</th><th>On order</th><th>Need</th><th>Status</th></tr></thead><tbody id="bom"></tbody></table></div>`;
+  return head('Materials', 'Tap a bin to log a grab, install, return or delivery', tools) + bar + `<div id="bom"></div>`;
 }
-function paintBom() {
-  const body = $('#bom'); if (!body) return;
+function matFiltered() {
   const s = ui.matSearch.trim().toLowerCase();
-  const rows = S.materials.filter((m) => {
+  return S.materials.filter((m) => {
     if (s && !`${m.name} ${m.part_no} ${m.category} ${m.location}`.toLowerCase().includes(s)) return false;
     const i = matInfo(m);
     return ui.matFilter === 'short' ? i.short > 0 : ui.matFilter === 'low' ? i.low : ui.matFilter === 'out' ? m.out_qty > 0 : true;
   });
-  if (!rows.length) { body.innerHTML = `<tr><td class="l" colspan="7"><p class="hint">No materials match.</p></td></tr>`; return; }
-  let cat = null;
-  body.innerHTML = rows.map((m) => {
-    const i = matInfo(m); const cc = m.category || 'Uncategorized'; const ch = cc !== cat ? `<tr class="cat"><td colspan="7">${esc(cc)}</td></tr>` : ''; cat = cc;
-    const n = (v) => `<span class="n ${v ? '' : 'zero'}">${q(v)}</span><span class="u">${esc(m.unit)}</span>`;
-    return `${ch}<tr class="r" data-act="open-mat" data-id="${m.id}"><td class="l"><div class="nm">${esc(m.name)}</div><div class="pn">${esc([m.part_no, m.location].filter(Boolean).join(' · '))}</div></td>
-      <td class="l gcol">${gauge(m, i)}</td><td class="m-hand">${n(m.on_hand)}</td><td>${n(m.out_qty)}</td><td>${n(m.on_order)}</td><td>${n(i.need)}</td>
-      <td>${i.short ? `<span class="short">${q(i.short)}</span>` : '<span class="zero">0</span>'}</td>
-      <td class="m-sub">${q(m.out_qty)} out · ${q(m.on_order)} on order · ${q(i.need)} still needed${i.short ? ` · <b style="color:var(--arc)">short ${q(i.short)}</b>` : ''}</td></tr>`;
-  }).join('');
+}
+function matFlag(m, i) { return i.short > 0 ? { k: 'bad', t: `SHORT ${q(i.short)}` } : i.low ? { k: 'warn', t: 'LOW' } : m.out_qty > 0 ? { k: 'out', t: 'OUT' } : { k: 'ok', t: 'OK' }; }
+function paintBom() {
+  const body = $('#bom'); if (!body) return;
+  const rows = matFiltered();
+  if (isMeter()) {
+    if (!rows.length) { body.innerHTML = `<tr><td class="l" colspan="7"><p class="hint">No materials match.</p></td></tr>`; return; }
+    let cat = null;
+    body.innerHTML = rows.map((m) => {
+      const i = matInfo(m); const cc = m.category || 'Uncategorized'; const ch = cc !== cat ? `<tr class="cat"><td colspan="7">${esc(cc)}</td></tr>` : ''; cat = cc; const fl = matFlag(m, i);
+      return `${ch}<tr class="r" data-act="open-mat" data-id="${m.id}"><td class="l"><div class="nm">${esc(m.name)}</div><div class="pn">${esc([m.part_no, m.location].filter(Boolean).join(' · '))}</div></td>
+        <td class="l gcol">${gauge(m, i)}</td><td class="m-hand">${N(m.on_hand)}<span class="u">${esc(m.unit)}</span></td><td>${N(m.out_qty)}</td><td>${N(m.on_order)}</td><td>${N(i.need)}</td>
+        <td><span class="flag ${fl.k}">${fl.t}</span></td><td class="m-sub">${q(m.out_qty)} out · ${q(m.on_order)} coming · ${q(i.need)} needed</td></tr>`;
+    }).join('');
+    return;
+  }
+  if (!rows.length) { body.innerHTML = `<p class="hint on-steel">No materials match.</p>`; return; }
+  const cats = {}; for (const m of rows) (cats[m.category || 'Uncategorized'] ||= []).push(m);
+  body.innerHTML = '<div class="shelves">' + Object.entries(cats).map(([cat, ms]) => `<section class="shelf-unit"><h2 class="spray">${esc(cat)}</h2><div class="shelf">${ms.map((m) => {
+    const i = matInfo(m); const fl = matFlag(m, i);
+    const stk = fl.k === 'bad' ? `<span class="stk red">−${q(i.short)}</span>` : fl.k === 'warn' ? '<span class="stk red">LOW</span>' : fl.k === 'out' ? `<span class="stk blue">${q(m.out_qty)}<small>out</small></span>` : '';
+    return `<button class="bin" data-act="open-mat" data-id="${m.id}"><span class="tape"><b>${esc(m.name)}</b><span class="q">${N(m.on_hand)} <small>${esc(m.unit)}</small></span>
+      <span class="need">${i.need ? `need ${q(i.need)}${fl.k === 'bad' ? '' : ' ✓'}` : 'no need logged'}${m.on_order ? ` · ${q(m.on_order)} coming` : ''}</span>${m.location ? `<span class="loc">${esc(m.location)}</span>` : ''}</span>${stk}</button>`; }).join('')}</div></section>`).join('') + '</div>';
 }
 function gauge(m, i) {
-  const total = Math.max(i.need, i.avail, m.reorder_point, 1); const w = (v) => clamp((v / total) * 100, 0, 100).toFixed(2);
-  return `<div class="gauge" title="${q(m.on_hand)} on hand, ${q(m.out_qty)} out, ${q(m.on_order)} on order, ${q(i.need)} still needed">
-    <i class="g-hand" style="width:${w(Math.max(0, m.on_hand))}%"></i><i class="g-out" style="width:${w(m.out_qty)}%"></i><i class="g-order" style="width:${w(m.on_order)}%"></i><i class="g-short" style="width:${w(i.short)}%"></i>
-    ${i.need > 0 ? `<span class="need" style="left:calc(${w(i.need)}% - 1px)"></span>` : ''}${m.reorder_point > 0 ? `<span class="rp" style="left:${w(m.reorder_point)}%"></span>` : ''}</div>`;
+  const total = Math.max(i.need, i.avail, m.reorder_point, 1);
+  const n = 30; const seg = (v) => Math.round(clamp(v / total, 0, 1) * n);
+  const h = seg(Math.max(0, m.on_hand)), o = seg(m.out_qty), r = seg(m.on_order), s = seg(i.short); const needAt = i.need > 0 ? seg(i.need) : -1;
+  const cells = []; for (let k = 0; k < n; k++) { let c = ''; if (k < h) c = 'h'; else if (k < h + o) c = 'o'; else if (k < h + o + r) c = 'r'; else if (k < h + o + r + s) c = 's'; cells.push(`<i class="${c}${k === needAt - 1 ? ' nd' : ''}"></i>`); }
+  return `<div class="gauge" title="${q(m.on_hand)} on hand, ${q(m.out_qty)} out, ${q(m.on_order)} on order, ${q(i.need)} still needed">${cells.join('')}</div>`;
 }
 
 // ── Trackers ──────────────────────────────────────────────────────────
@@ -448,7 +508,7 @@ function vTrackers() {
   const selbar = ui.selMode ? `<div class="selbar"><b>${ui.sel.size} selected</b>${t.statuses.map((s) => `<button class="btn sm" data-act="bulk-status" data-s="${esc(s.key)}" ${ui.sel.size ? '' : 'disabled'}>${sw(s.color)}${esc(s.label)}</button>`).join('')}<button class="btn sm ghost" data-act="sel-off">Cancel</button></div>` : '';
   const rf = (k, l) => `<button data-act="tr-filter" data-f="${k}" ${pressed(ui.trFilter === k)}>${l}</button>`;
   return head('Trackers', '', tools) + `<div class="tr-list">${pills}</div>
-  <div class="tr-head mod"><div><h2>${sw(t.color)}${esc(t.name)}</h2>
+  <div class="tr-head panel-box"><div><h2>${sw(t.color)}${esc(t.name)}</h2>
       <p>${p.pct}% done. ${p.doneLocs} of ${p.total} ${esc((ty.plural || '').toLowerCase())} finished${p.problems ? `, ${p.problems} problem${p.problems > 1 ? 's' : ''}` : ''}${t.due_date ? `, due ${due(t.due_date)}` : ''}.${t.description ? ' ' + esc(t.description) : ''}</p></div>
     <div class="row">${S.manage ? `<button class="btn sm" data-act="tracker-edit" data-id="${t.id}">Edit tracker</button>` : ''}${t.mode !== 'qty' ? `<button class="btn sm ${ui.selMode ? 'sun' : ''}" data-act="sel-toggle">${ui.selMode ? 'Selecting' : 'Select several'}</button>` : ''}</div>
     ${docs.length ? `<div class="docs doc-chips">${docs.map((lk, i) => docChip(lk, i, 'tracker')).join('')}</div>` : ''}</div>
@@ -465,11 +525,11 @@ function cellHtml(t, l, c) {
     const sid = c.step ? c.step.id : 0; const e = ent(t, l.id, sid); const st = statusOf(t, e?.status); const k = `${l.id}:${sid}`;
     const first = st.key === t.statuses[0].key;
     return `<td><button class="cell ${ui.sel.has(k) ? 'sel' : ''}" data-act="cell" data-l="${l.id}" data-s="${sid}" title="${esc(st.label)}">
-      <span class="sq ${first ? '' : 'on'}" style="${first ? '' : `background:${esc(st.color)}`}"></span>${c.k === 'st' ? `<span>${esc(st.label)}</span>` : ''}${e?.crew?.length && t.claims ? `<span class="who">${esc(e.crew.join(', '))}</span>` : ''}</button></td>`;
+      <span class="sq k-${kindOfStatus(t, st)}" style="--c:${esc(st.color)}"></span>${c.k === 'st' ? `<span>${esc(st.label)}</span>` : ''}${e?.crew?.length && t.claims ? `<span class="who">${esc(e.crew.join(', '))}</span>` : ''}</button></td>`;
   }
   const e = ent(t, l.id, 0); const tg = targetOf(t, l.id); const v = e?.qty || 0; const st = locState(t, l.id);
-  return `<td><button class="cell" data-act="open-loc" data-id="${l.id}" data-t="${t.id}"><span class="qty">${q(v)}${tg ? `<span style="color:var(--faint)"> / ${q(tg)}</span>` : ''}</span>
-    <span class="mini"><i style="width:${tg ? clamp((v / tg) * 100, 0, 100) : 0}%;background:${esc(st.color)}"></i></span></button></td>`;
+  return `<td><button class="cell" data-act="open-loc" data-id="${l.id}" data-t="${t.id}"><span class="qty">${N(v)}${tg ? `<span class="of"> / ${N(tg)}</span>` : ''}</span>
+    <span class="mini k-${kindOf(st)}" style="--c:${esc(st.color)}"><i style="width:${tg ? clamp((v / tg) * 100, 0, 100) : 0}%"></i></span></button></td>`;
 }
 
 // ── Map ───────────────────────────────────────────────────────────────
@@ -506,17 +566,16 @@ function vMap() {
       <span class="msg">${mapMsg(cands)}</span>
       ${mp.poly.length ? `<button class="btn sm" data-act="poly-undo">Undo point</button><button class="btn sm" data-act="poly-close" ${mp.poly.length < 3 ? 'disabled' : ''}>Close</button>` : ''}
       <button class="btn sm sun" data-act="map-edit-done">Done</button></div>` : '';
-  const legend = t ? (t.mode === 'steps' && !mp.stepId ? [{ color: t.statuses.find((s) => s.done)?.color, label: 'Done' }, { color: partialColor(t), label: 'In progress' }, ...t.statuses.filter((s) => s.problem)] : t.statuses) : [];
+  const legend = t ? (t.mode === 'steps' && !mp.stepId ? [{ color: t.statuses.find((s) => s.done)?.color, label: 'Done', k: 'done' }, { color: partialColor(t), label: 'In progress', k: 'work' }, ...t.statuses.filter((s) => s.problem).map((s) => ({ ...s, k: 'prob' })), { color: t.statuses[0].color, label: 'Not started', k: 'todo' }] : t.statuses.map((s) => ({ ...s, k: kindOfStatus(t, s) }))) : [];
   return head('Map', `<span class="crumbs">${crumbs.join('<span>/</span>')}</span>`, tools) + `
   <div class="map-bar">
     <select data-act="map-pick" aria-label="Plan">${mapsSorted.map((x) => `<option value="${x.id}" ${x.id === m.id ? 'selected' : ''}>${x.location_id && !x.name.includes(lname(x.location_id)) ? `${esc(lname(x.location_id))}: ` : ''}${esc(x.name)}</option>`).join('')}</select>
     <select data-act="map-tracker" aria-label="Color by tracker">${shown.length ? shown.map((x) => `<option value="${x.id}" ${String(x.id) === String(mp.trId) ? 'selected' : ''}>${esc(x.name)}</option>`).join('') : '<option value="">No trackers</option>'}</select>
     ${t?.mode === 'steps' ? `<select data-act="map-step" aria-label="Step"><option value="">All steps</option>${t.steps.map((s) => `<option value="${s.id}" ${String(s.id) === String(mp.stepId) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select>` : ''}
-    <div class="seg" role="group" aria-label="Plan colors"><button data-act="map-dark" data-v="1" ${pressed(mp.dark)}>Night plan</button><button data-act="map-dark" data-v="0" ${pressed(!mp.dark)}>Original</button></div>
   </div>${edit}
   <div class="mapview ${mp.editing && ['box', 'poly', 'pin'].includes(mp.tool) ? 'drawing' : ''}" id="mapview"><svg id="mapsvg" xmlns="http://www.w3.org/2000/svg"></svg>
     <div class="map-zoom"><button data-act="zoom" data-z="1.4" aria-label="Zoom in">+</button><button data-act="zoom" data-z="0.7" aria-label="Zoom out">−</button><button data-act="zoom-fit">Fit</button></div>
-    ${legend.length ? `<div class="map-legend">${legend.map((s) => `<span>${sw(s.color)}${esc(s.label)}</span>`).join('')}</div>` : ''}</div>`;
+    ${legend.length ? `<div class="map-legend">${legend.map((s) => `<span><i class="lg k-${s.k}" style="--c:${esc(s.color)}"></i>${esc(s.label)}</span>`).join('')}</div>` : ''}</div>`;
 }
 function defaultAssignType(m) {
   if (m.location_id) { const lt = S.L[m.location_id]?.type_id; return (S.types.find((ty) => ty.parent_type_id === lt) || S.types[0])?.id; }
@@ -561,13 +620,13 @@ function svgContent() {
     const lit = st && (st.started || st.done);
     if (a.points.length === 1) {
       const [x, y] = [(a.points[0][0] * W) / 100, (a.points[0][1] * H) / 100];
-      shapes.push(`<circle class="pin" data-area="${a.id}" cx="${x}" cy="${y}" r="${pinR}" fill="${l ? (lit ? st.color : '#8A98B3') : '#FF5D4A'}" ${mp.picked === a.id ? 'stroke="#5CC8FF" stroke-width="4"' : ''}/>`);
+      shapes.push(`<circle class="pin k-${l ? (lit ? kindOf(st) : 'todo') : 'unassigned'} ${mp.picked === a.id ? 'picked' : ''}" data-area="${a.id}" cx="${x}" cy="${y}" r="${pinR}" style="--c:${esc(st?.color || '#8A98B3')}"/>`);
       if (l) labels.push(`<text class="mlbl pinl" x="${x + pinR * 1.4}" y="${y}" font-size="${pinR * 1.15}" style="stroke-width:${pinR * 0.3}px">${esc(l.name)}</text>`);
       continue;
     }
     const pts = a.points.map((p) => `${(p[0] * W) / 100},${(p[1] * H) / 100}`).join(' ');
-    const cls = !l ? 'unassigned' : !lit ? 'todo' : '';
-    shapes.push(`<polygon class="area ${cls} ${mp.picked === a.id ? 'picked' : ''} ${l && S.mapFor[l.id] ? 'hasmap' : ''}" data-area="${a.id}" points="${pts}" ${lit ? `style="fill:${st.color};fill-opacity:.5"` : ''}/>`);
+    const cls = !l ? 'unassigned' : !lit ? 'k-todo' : `k-${kindOf(st)}`;
+    shapes.push(`<polygon class="area ${cls} ${mp.picked === a.id ? 'picked' : ''} ${l && S.mapFor[l.id] ? 'hasmap' : ''}" data-area="${a.id}" points="${pts}" style="--c:${esc(st?.color || '#8A98B3')}"/>`);
     if (l) { const c = areaCenter(a, g); const size = clamp(Math.min(c.bw / Math.max(l.name.length * 0.62, 1), c.bh * 0.5), W / 450, W / 45);
       labels.push(`<text class="mlbl" x="${c.x}" y="${c.y}" font-size="${size}" style="stroke-width:${size * 0.22}px">${esc(l.name)}</text>`); }
   }
@@ -575,7 +634,10 @@ function svgContent() {
   if (mp.draft) { const d = mp.draft; draft = `<rect class="draft" x="${Math.min(d.x0, d.x1)}" y="${Math.min(d.y0, d.y1)}" width="${Math.abs(d.x1 - d.x0)}" height="${Math.abs(d.y1 - d.y0)}"/>`; }
   if (mp.poly.length) { const r = (M * 0.18) / Math.max(mp.s * 3, 0.4);
     draft += `<polyline class="draft" points="${mp.poly.map((p) => p.join(',')).join(' ')}"/>` + mp.poly.map((p, i) => `<circle class="vtx" cx="${p[0]}" cy="${p[1]}" r="${i === 0 ? r * 1.6 : r}"/>`).join(''); }
-  return `<rect x="0" y="0" width="${W}" height="${H}" fill="${mp.dark ? '#0B111D' : '#fff'}"/><image class="plan ${mp.dark ? 'dark' : ''}" href="${m.url}" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="none"/>${frame}${shapes.join('')}${labels.join('')}${draft}`;
+  const pu = Math.max(W, H) / 160;
+  const defs = `<defs><pattern id="pHatch" width="${pu}" height="${pu}" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="${pu * 0.45}" height="${pu}" class="pat"/></pattern>
+    <pattern id="pDots" width="${pu}" height="${pu}" patternUnits="userSpaceOnUse"><circle cx="${pu / 2}" cy="${pu / 2}" r="${pu * 0.18}" class="pat"/></pattern></defs>`;
+  return `${defs}<rect class="paper" x="${-M}" y="${-M}" width="${W + 2 * M}" height="${H + 2 * M}"/><image class="plan" href="${m.url}" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="none"/>${frame}${shapes.join('')}${labels.join('')}${draft}`;
 }
 
 // generic pan/zoom engine (used by the map and the drawing viewer)
@@ -673,7 +735,7 @@ function vDrawings() {
   if (!S.drawings.length) return head('Drawings', '', tools) + emptyBox('No drawings yet', 'Upload IFC sets and PB sheets as PDFs. The app can read each page and attach it to the matching power block, so tapping PB-07 anywhere pulls up its sheets. You can also attach a drawing to a tracker so it opens with that work.', S.manage ? '<button class="btn sun" data-act="dwg-upload">Upload drawings</button>' : '');
   return head('Drawings', `${S.drawings.length} file${S.drawings.length > 1 ? 's' : ''}, ${S.links.length} links to locations and trackers`, tools) + `<div class="dwg-list">${S.drawings.map((d) => {
     const n = S.links.filter((lk) => lk.drawing_id === d.id).length;
-    return `<div class="dwg mod" data-act="open-dwg" data-id="${d.id}" role="button" tabindex="0"><div class="thumb" style="background-image:url('/api/drawings/${d.id}/page/1?w=600&t=${tok()}')"></div>
+    return `<div class="dwg" data-act="open-dwg" data-id="${d.id}" role="button" tabindex="0"><div class="thumb" style="background-image:url('/api/drawings/${d.id}/page/${S.links.find((lk) => lk.drawing_id === d.id && lk.page && lk.location_id)?.page || 1}?w=600&t=${tok()}')"></div>
       <div class="body"><div class="sheet">${esc(d.sheet || 'Drawing')}${d.rev ? ` · Rev ${esc(d.rev)}` : ''}</div><div class="nm">${esc(d.name)}</div>
       <div class="meta">${d.pages} page${d.pages > 1 ? 's' : ''} · ${n} link${n === 1 ? '' : 's'}</div></div></div>`; }).join('')}</div>`;
 }
@@ -689,19 +751,21 @@ function vSetup() {
       <div>${S.manage ? `<button class="btn sm" data-act="person-edit" data-name="${esc(name)}">Edit</button>` : ''}</div>
       ${Object.keys(out).length ? `<div class="has chips">${Object.entries(out).map(([mid, n]) => S.M[mid] ? `<span class="chip static">${q(n)} ${esc(S.M[mid].unit)} <small>${esc(S.M[mid].name)}</small></span>` : '').join('')}</div>` : ''}</div>`; }).join('');
   return head('Setup', 'How your site is broken down, who is on it, and exports') + `<div class="setup-grid"><div>
-    ${S.manage ? `<section class="panel-box mod"><h2 class="sec-h">Job</h2><form data-form="job" class="row" style="align-items:flex-end"><label class="f" style="flex:1 1 220px;margin:0"><span>Job name</span><input name="job_name" value="${esc(S.job.name)}"></label><button class="btn sun">Save</button></form></section>` : ''}
-    <section class="panel-box mod"><h2 class="sec-h">Location types <small>What work is tracked against</small></h2>${types}
+    ${S.manage ? `<section class="panel-box"><h2 class="sec-h">Job</h2><form data-form="job" class="row" style="align-items:flex-end"><label class="f" style="flex:1 1 220px;margin:0"><span>Job name</span><input name="job_name" value="${esc(S.job.name)}"></label><button class="btn sun">Save</button></form></section>` : ''}
+    <section class="panel-box"><h2 class="sec-h">Location types <small>What work is tracked against</small></h2>${types}
       ${S.manage ? '<div class="row" style="margin-top:12px"><button class="btn sm" data-act="type-edit">Add a type</button></div>' : ''}
       <p class="hint" style="margin-top:12px">Examples: Power block, Row inside a power block, Transition (pin) where cable comes up, Inverter, Combiner, Trench segment.</p></section>
-    <section class="panel-box mod"><h2 class="sec-h">People ${S.manage ? '<button class="btn sm" data-act="person-edit">Add person</button>' : ''}</h2>${people || '<p class="hint">Add your crew so you can track who grabbed what.</p>'}
+    <section class="panel-box"><h2 class="sec-h">People ${S.manage ? '<button class="btn sm" data-act="person-edit">Add person</button>' : ''}</h2>${people || '<p class="hint">Add your crew so you can track who grabbed what.</p>'}
       ${S.users.filter((u) => !u.active && !S.crew.includes(u.name)).map((u) => `<div class="person off"><div class="nm">${esc(u.name)} <span class="role">turned off</span></div><div>${S.manage ? `<button class="btn sm" data-act="person-edit" data-name="${esc(u.name)}">Edit</button>` : ''}</div></div>`).join('')}</section>
-    <section class="panel-box mod"><h2 class="sec-h">Exports</h2><div class="row">
+    <section class="panel-box"><h2 class="sec-h">Exports</h2><div class="row">
       <a class="btn sm" href="/api/export/materials.csv?t=${tok()}">Materials</a><a class="btn sm" href="/api/export/order.csv?t=${tok()}">Order list</a>
       <a class="btn sm" href="/api/export/progress.csv?t=${tok()}">Tracker progress</a><a class="btn sm" href="/api/export/txns.csv?t=${tok()}">Material log</a></div></section>
-    <section class="panel-box mod"><h2 class="sec-h">This device</h2><p class="hint">Signed in as ${esc(S.me.name)}. ${installEvt ? '' : 'iPhone: Share, then Add to Home Screen. Android: browser menu, then Install app.'}</p>
+    <section class="panel-box"><h2 class="sec-h">Look on this device</h2><p class="hint">Each person picks their own. Both show the same data.</p>
+      <div class="looks">${Object.entries(SKINS).map(([k, l]) => `<button class="look look-${k}" data-act="skin" data-v="${k}" ${pressed(ui.skin === k)}><span class="lk-prev" aria-hidden="true"></span><b>${l}</b><small>${k === 'meter' ? 'Handheld meter: LCD readouts, rotary dial' : 'Job box: tape labels, bins, tally board'}</small></button>`).join('')}</div></section>
+    <section class="panel-box"><h2 class="sec-h">This device</h2><p class="hint">Signed in as ${esc(S.me.name)}. ${installEvt ? '' : 'iPhone: Share, then Add to Home Screen. Android: browser menu, then Install app.'}</p>
       <div class="row">${installEvt ? '<button class="btn sm sun" data-act="install">Install app</button>' : ''}<button class="btn sm" data-act="signout">Sign out</button></div></section>
   </div><div>
-    <section class="panel-box mod"><h2 class="sec-h">Locations</h2>
+    <section class="panel-box"><h2 class="sec-h">Locations</h2>
       ${S.types.length ? `<div class="seg" role="group" style="margin-bottom:14px">${S.types.map((ty) => `<button data-act="setup-type" data-id="${ty.id}" ${pressed(ty.id === ui.setupType)}>${esc(ty.plural)}<span class="ct">${S.locations.filter((l) => l.type_id === ty.id).length}</span></button>`).join('')}</div>` : '<p class="hint">Add a location type first.</p>'}
       ${st && S.manage ? genForm(st) : ''}
       ${st ? locTree(st) : ''}</section>
@@ -768,8 +832,8 @@ function locBody(st) {
     ${S.manage ? `<button class="btn sm" data-act="dwg-link-loc" data-id="${lid}">Attach drawing</button>` : ''}</div>`;
   const docHtml = docs.length ? `<h3>Drawings <small style="color:var(--faint);font-weight:500">${docs.length}</small></h3><div class="doc-chips">${docs.map((lk, i) => docChip(lk, i, 'loc')).join('')}</div>` : '';
   const childHtml = childTrs.length ? `<h3>Inside ${esc(l.name)}</h3>${childTrs.map((t) => { const locs = S.scope[t.id].filter((x) => S.anc[x.id].includes(lid)); const r = rollState(t, lid);
-      return `<div class="tk mod"><div class="tk-h">${sw(t.color)}${esc(t.name)}<span class="pc">${r?.count ? `${r.count.done}/${r.count.total} ${esc(typeOf(locs[0]).plural.toLowerCase())}` : ''}</span></div>
-        <div class="cgroup">${locs.map((x) => { const s = locState(t, x.id); return `<button class="pv big" style="background:${s.started || s.done ? s.color : ''}" data-act="open-loc" data-id="${x.id}" data-t="${t.id}" title="${esc(x.name)}: ${esc(s.label)}" aria-label="${esc(x.name)}"></button>`; }).join('')}</div>
+      return `<div class="tk"><div class="tk-h">${sw(t.color)}${esc(t.name)}<span class="pc">${r?.count ? `${r.count.done}/${r.count.total} ${esc(typeOf(locs[0]).plural.toLowerCase())}` : ''}</span></div>
+        <div class="cgroup">${locs.map((x) => { const s = locState(t, x.id); return `<button class="pv big k-${kindOf(s)}" style="--c:${esc(s.color)}" data-act="open-loc" data-id="${x.id}" data-t="${t.id}" title="${esc(x.name)}: ${esc(s.label)}" aria-label="${esc(x.name)}: ${esc(s.label)}"></button>`; }).join('')}</div>
         <div class="row" style="margin-top:8px"><button class="btn sm ghost" data-act="tracker-filter" data-t="${t.id}" data-p="${lid}">Open on check sheet</button></div></div>`; }).join('')}`
     : kids.length ? `<h3>Inside ${esc(l.name)}</h3><div class="chips">${kids.map((k) => `<button class="chip" data-act="open-loc" data-id="${k}">${esc(lname(k))}</button>`).join('')}</div>` : '';
   const crewHtml = anyClaims ? `<h3>Who's on it</h3><div class="chips">${S.crew.map((n) => `<button class="chip" data-act="loc-crew" data-n="${esc(n)}" ${pressed(st.crew.has(n))}>${esc(n)}</button>`).join('') || '<span class="hint">Add people in Setup.</span>'}</div>
@@ -783,7 +847,7 @@ function locBody(st) {
 }
 function statusButtons(t, lid, sid) {
   const cur = ent(t, lid, sid)?.status || t.statuses[0].key;
-  return `<div class="status-sw" role="group">${t.statuses.map((s) => `<button data-act="loc-status" data-t="${t.id}" data-s="${sid}" data-k="${esc(s.key)}" ${pressed(cur === s.key)} style="${cur === s.key ? `background:${esc(s.color)}` : ''}">${esc(s.label)}</button>`).join('')}</div>`;
+  return `<div class="status-sw" role="group">${t.statuses.map((s) => `<button data-kind="${kindOfStatus(t, s)}" data-act="loc-status" data-t="${t.id}" data-s="${sid}" data-k="${esc(s.key)}" ${pressed(cur === s.key)} style="--c:${esc(s.color)}">${esc(s.label)}</button>`).join('')}</div>`;
 }
 function trackerControls(t, lid) {
   const s = locState(t, lid); const e0 = ent(t, lid, 0);
@@ -805,7 +869,7 @@ function trackerControls(t, lid) {
       : `<input ${attrs} type="${f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text'}" step="any" value="${esc(v ?? '')}">`;
     return f.type === 'check' ? `<div>${input}</div>` : `<label class="f"><span>${esc(f.label)}</span>${input}</label>`; }).join('')}</div>` : '';
   const docs = S.links.filter((lk) => lk.tracker_id === t.id && (lk.location_id === lid || !lk.location_id)).length;
-  return `<div class="tk mod"><div class="tk-h">${sw(t.color)}${esc(t.name)}<span class="pc" style="color:${s.started || s.done ? esc(s.color) : 'var(--dim)'}">${esc(s.label)}</span></div>${inner}${fields}</div>`;
+  return `<div class="tk"><div class="tk-h">${sw(t.color)}${esc(t.name)}<span class="pc k-${kindOf(s)}" style="--c:${esc(s.color)}">${esc(s.label)}</span></div>${inner}${fields}</div>`;
 }
 
 // Material panel
@@ -984,7 +1048,7 @@ function linkBody(st) {
 const vw = { items: [], i: 0, page: 1, s: 1, tx: 0, ty: 0, dark: true };
 function openViewer(items, i = 0) {
   if (!items?.length) return;
-  vw.items = items; vw.i = clamp(i, 0, items.length - 1); vw.page = items[vw.i].page || 1;
+  vw.items = items; vw.i = clamp(i, 0, items.length - 1); vw.page = items[vw.i].page || 1; vw.dark = isMeter();
   $('#viewer').hidden = false; paintViewer();
 }
 function paintViewer() {
@@ -993,7 +1057,7 @@ function paintViewer() {
   const multi = d.is_pdf && !it.page && d.pages > 1;
   v.innerHTML = `<div class="vbar"><h2>${esc(d.sheet || '')} ${esc(d.name)}<small>${d.is_pdf ? `page ${vw.page} of ${d.pages}` : ''}${it.why ? ` · ${esc(it.why)}` : ''}</small></h2>
     ${multi ? `<button class="btn sm" data-act="vw-page" data-d="-1" ${vw.page > 1 ? '' : 'disabled'}>Prev page</button><button class="btn sm" data-act="vw-page" data-d="1" ${vw.page < d.pages ? '' : 'disabled'}>Next page</button>` : ''}
-    <div class="seg"><button data-act="vw-dark" data-v="1" ${pressed(vw.dark)}>Night</button><button data-act="vw-dark" data-v="0" ${pressed(!vw.dark)}>Original</button></div>
+    <div class="seg"><button data-act="vw-dark" data-v="1" ${pressed(vw.dark)}>${isMeter() ? 'LCD' : 'Inverted'}</button><button data-act="vw-dark" data-v="0" ${pressed(!vw.dark)}>Original</button></div>
     <a class="btn sm" href="/api/drawings/${d.id}/file?t=${tok()}" target="_blank" rel="noopener">File</a><button class="btn sm sun" data-act="vw-close">Close</button></div>
   <div class="stage" id="vstage"><img alt="${esc(d.name)} page ${vw.page}" class="${vw.dark ? 'dark' : ''}" src="/api/drawings/${d.id}/page/${vw.page}?w=${w}&t=${tok()}"><div class="loading" id="vload">Loading sheet…</div>
     <div class="map-zoom"><button data-act="vw-zoom" data-z="1.4" aria-label="Zoom in">+</button><button data-act="vw-zoom" data-z="0.7" aria-label="Zoom out">−</button><button data-act="vw-fit">Fit</button></div></div>
@@ -1086,26 +1150,39 @@ function pickMaterialAt(lid) {
 
 // ── sign-in ───────────────────────────────────────────────────────────
 let gate = { status: null, name: '', pin: '', err: '' };
+function gateFrame(inner, title) {
+  return isMeter()
+    ? `<div class="gate"><div class="g-dev"><span class="brand">FIELD · MT-2</span><div class="bezel"><div class="lcd g-lcd"><div class="annun"><span class="on">${esc(title)}</span><span class="r">${gate.status?.job_name ? esc(gate.status.job_name.toUpperCase()) : ''}</span></div>${inner}</div></div>
+        <div class="row" style="justify-content:center;margin-top:14px"><button class="key" data-act="skin" data-v="box" style="width:auto;padding:0 18px">MODE · JOB BOX</button></div></div></div>`
+    : `<div class="gate"><div class="g-box"><div class="lid small"><h1 class="stencil">${esc(gate.status?.job_name || 'Material Tracker')}</h1></div><div class="paper g-paper">${inner}</div>
+        <div class="row" style="justify-content:center;margin-top:14px"><button class="lid-btn" data-act="skin" data-v="meter">Meter view</button></div></div></div>`;
+}
 async function renderGate() {
+  applySkin();
   const app = $('#app');
   if (!gate.status) {
-    app.innerHTML = `<div class="gate"><div class="gate-card mod">${LOGO}<h1>Material Tracker</h1><p class="sub">Connecting…</p></div></div>`;
+    app.innerHTML = gateFrame('<p class="hint">Connecting…</p>', 'CONNECTING');
     try { gate.status = await api('GET', '/api/status'); }
-    catch (e) { app.innerHTML = `<div class="gate"><div class="gate-card mod">${LOGO}<h1>Can't reach the server</h1><p class="sub">${esc(e.message)}</p><button class="btn sun" onclick="location.reload()">Try again</button></div></div>`; return; }
+    catch (e) { app.innerHTML = gateFrame(`<h2>Can't reach the server</h2><p class="hint">${esc(e.message)}</p><button class="btn sun" onclick="location.reload()">Try again</button>`, 'NO SIGNAL'); return; }
   }
   const s = gate.status;
   if (s.setup_needed) {
-    app.innerHTML = `<div class="gate"><div class="gate-card mod">${LOGO}<h1>Set up the job</h1><p class="sub">You'll be the foreman. Power blocks, rows and transitions are set up as starting location types. Change them anytime.</p>
+    app.innerHTML = gateFrame(`<h2>Set up the job</h2><p class="hint">You'll be the foreman. Power blocks, rows and transitions are ready as location types. Change them anytime.</p>
       <form data-form="setup"><label class="f"><span>Job name</span><input name="job_name" placeholder="Sunflower Solar, Phase 2" required autofocus></label>
         <label class="f"><span>Your name</span><input name="name" required></label><label class="f"><span>Your PIN, 4 to 8 digits</span><input name="pin" inputmode="numeric" pattern="\\d{4,8}" required autocomplete="new-password"></label>
-        <p class="err">${esc(gate.err)}</p><button class="btn sun" style="width:100%">Start tracking</button></form></div></div>`;
+        <p class="err">${esc(gate.err)}</p><button class="btn sun" style="width:100%">Start tracking</button></form>`, 'SETUP');
     return;
   }
-  app.innerHTML = `<div class="gate"><div class="gate-card mod">${LOGO}<h1>${esc(s.job_name || 'Material Tracker')}</h1><p class="sub">${gate.name ? `Enter your PIN, ${esc(gate.name)}.` : 'Who are you?'}</p>
-    ${!gate.name ? `<div class="chips">${s.users.map((n) => `<button class="chip" style="min-height:46px;font-size:16px" data-act="gate-name" data-n="${esc(n)}">${esc(n)}</button>`).join('')}</div>`
-    : `<div class="pin-dots">${Array.from({ length: Math.max(4, gate.pin.length) }, (_, i) => `<i class="${i < gate.pin.length ? 'on' : ''}"></i>`).join('')}</div><p class="err">${esc(gate.err)}</p>
-      <div class="keypad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button data-act="pin" data-n="${n}">${n}</button>`).join('')}<button data-act="pin-back" aria-label="Delete">⌫</button><button data-act="pin" data-n="0">0</button><button class="go" data-act="pin-go">Go</button></div>
-      <div class="row" style="margin-top:14px"><button class="btn ghost" data-act="gate-name" data-n="">Not ${esc(gate.name)}?</button></div>`}</div></div>`;
+  const inner = !gate.name
+    ? `<h2>${isMeter() ? 'Who is this?' : 'Grab your hard hat'}</h2><div class="${isMeter() ? 'chips' : 'hats pick'}">${s.users.map((n) => isMeter()
+        ? `<button class="chip big" data-act="gate-name" data-n="${esc(n)}">${esc(n)}</button>`
+        : `<button class="hat" data-act="gate-name" data-n="${esc(n)}">${HAT(hatColor(n))}<span class="hand">${esc(n)}</span></button>`).join('')}</div>`
+    : `<h2>PIN for ${esc(gate.name)}</h2>
+      <div class="pin-read">${isMeter() ? `<span class="num ghost">8888</span><span class="num">${'8'.repeat(gate.pin.length).replace(/8/g, '-') || ''}</span>` : Array.from({ length: Math.max(4, gate.pin.length) }, (_, i) => `<i class="${i < gate.pin.length ? 'on' : ''}"></i>`).join('')}</div>
+      <p class="err">${esc(gate.err)}</p>
+      <div class="keypad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button data-act="pin" data-n="${n}">${n}</button>`).join('')}<button data-act="pin-back" aria-label="Delete">⌫</button><button data-act="pin" data-n="0">0</button><button class="go" data-act="pin-go">GO</button></div>
+      <div class="row" style="margin-top:12px"><button class="btn ghost" data-act="gate-name" data-n="">Not ${esc(gate.name)}?</button></div>`;
+  app.innerHTML = gateFrame(inner, gate.name ? 'ENTER PIN' : 'SIGN IN');
 }
 async function tryLogin() {
   if (gate.pin.length < 4) { gate.err = 'PINs are at least 4 digits.'; return renderGate(); }
@@ -1135,6 +1212,13 @@ async function setEntries(t, locIds, stepIds, body) {
 }
 const ACT = {
   go: (el) => go(el.dataset.v), close: closePanel,
+  skin: (el) => setSkin(el.dataset.v),
+  backlight: () => { ui.backlight = !ui.backlight; localStorage.setItem('mt.bl', ui.backlight ? '1' : '0'); applySkin(); $$('[data-act=backlight]').forEach((b) => b.setAttribute('aria-pressed', ui.backlight)); },
+  'sync-now': async () => { await flushOutbox(); await refresh(); toast('Synced'); },
+  'quick-log': () => { const st = { kind: 'pick', filter: '' };
+    st.list = () => `<input type="search" data-act="pick-filter" placeholder="Search materials" value="${esc(st.filter)}" autofocus style="margin-bottom:8px">
+      <ul class="picklist">${S.materials.filter((m) => !st.filter || m.name.toLowerCase().includes(st.filter.toLowerCase())).map((m) => `<li><button data-act="open-mat" data-id="${m.id}"><span>${esc(m.name)}</span><small>${q(m.on_hand)} ${esc(m.unit)} on hand</small></button></li>`).join('') || '<li class="hint" style="padding:12px">No materials yet.</li>'}</ul>`;
+    openPanel('Log material', 'Pick what moved', st.list(), st); },
   install: async () => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice; installEvt = null; render(); },
   signout: () => { if (confirm('Sign out on this device?')) signOut(); },
   'gate-name': (el) => { gate.name = el.dataset.n; gate.pin = ''; gate.err = ''; renderGate(); },
